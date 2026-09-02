@@ -15,7 +15,9 @@ struct SanctuaryMapView: View {
 
     private var lotCount: Int {
         let lastOccupiedSlot = store.state.terrains.compactMap(\.mapSlot).max() ?? -1
-        return max(24, max(lastOccupiedSlot + 1, store.state.terrains.count + 8))
+        let requiredCount = max(lastOccupiedSlot + 1, store.state.terrains.count + 8)
+        let completeTrios = (requiredCount + 2) / 3 * 3
+        return max(21, completeTrios)
     }
 
     private var lots: [SanctuaryMapLot] {
@@ -220,10 +222,33 @@ struct SanctuaryMapLot: Identifiable {
 
 enum SanctuaryMapLayout {
     static let lotSize = CGSize(width: 224, height: 276)
-    static let centerSpacing: CGFloat = 146
     private static let minimumCanvasSide: CGFloat = 1_360
     private static let canvasPadding: CGFloat = 40
-    private static let latticeRotation = -47 * CGFloat.pi / 180
+
+    /// One fitted module transcribed from the Figma reference. Figma's named
+    /// rotations run in the opposite visual direction to SwiftUI for this
+    /// asset, hence `-120` becomes `120` and `121` becomes `-121` here.
+    private static let trioMembers = [
+        TrioMember(offset: .zero, rotation: .degrees(120)),
+        TrioMember(offset: CGPoint(x: -95, y: 106), rotation: .zero),
+        TrioMember(offset: CGPoint(x: 45, y: 135), rotation: .degrees(-121))
+    ]
+
+    /// Neighboring trio origins form the same oblique hexagonal lattice shown
+    /// in the reference. Keeping the module and its lattice separate lets the
+    /// pattern expand beyond the first 21 lots without changing the fit.
+    private static let trioStepQ = CGVector(dx: 292, dy: 72)
+    private static let trioStepR = CGVector(dx: 85, dy: 291)
+
+    private struct TrioMember {
+        let offset: CGPoint
+        let rotation: Angle
+    }
+
+    private struct RelativeLot {
+        let position: CGPoint
+        let rotation: Angle
+    }
 
     private struct AxialCoordinate {
         let q: Int
@@ -233,58 +258,60 @@ enum SanctuaryMapLayout {
             max(abs(q), max(abs(r), abs(q + r)))
         }
 
-        var rotation: Angle {
-            switch positiveModulo(q + 2 * r, divisor: 3) {
-            case 1: .degrees(120)
-            case 2: .degrees(-120)
-            default: .zero
-            }
-        }
-
-        private var unrotatedPoint: CGPoint {
-            CGPoint(
-                x: centerSpacing * (CGFloat(q) + CGFloat(r) / 2),
-                y: centerSpacing * sqrt(3) / 2 * CGFloat(r)
-            )
-        }
-
         var point: CGPoint {
-            let cosine = cos(latticeRotation)
-            let sine = sin(latticeRotation)
-            return CGPoint(
-                x: unrotatedPoint.x * cosine - unrotatedPoint.y * sine,
-                y: unrotatedPoint.x * sine + unrotatedPoint.y * cosine
+            CGPoint(
+                x: CGFloat(q) * trioStepQ.dx + CGFloat(r) * trioStepR.dx,
+                y: CGFloat(q) * trioStepQ.dy + CGFloat(r) * trioStepR.dy
             )
         }
 
         var clockwiseOrder: CGFloat {
-            let angle = atan2(unrotatedPoint.y, unrotatedPoint.x) + .pi / 3
+            let angle = atan2(point.y, point.x) + .pi / 2
             if abs(angle) < 0.000_001 { return 0 }
             return angle < 0 ? angle + 2 * .pi : angle
-        }
-
-        private func positiveModulo(_ value: Int, divisor: Int) -> Int {
-            (value % divisor + divisor) % divisor
         }
     }
 
     static func canvasSize(for count: Int) -> CGSize {
-        let radius = ringRadius(for: count)
+        let relativeLots = relativeLots(count: count)
+        guard let bounds = pointBounds(of: relativeLots) else {
+            return CGSize(width: minimumCanvasSide, height: minimumCanvasSide)
+        }
+
         let rotatedLotRadius = hypot(lotSize.width / 2, lotSize.height / 2)
-        let requiredSide = 2 * (
-            CGFloat(radius) * centerSpacing + rotatedLotRadius + canvasPadding
+        let requiredSide = max(
+            bounds.width + 2 * (rotatedLotRadius + canvasPadding),
+            bounds.height + 2 * (rotatedLotRadius + canvasPadding)
         )
         let side = max(minimumCanvasSide, ceil(requiredSide))
         return CGSize(width: side, height: side)
     }
 
-    /// Produces a center-out hexagonal spiral on a triangular lattice. The
-    /// coordinate phase rotates adjoining silhouettes so their concave and
-    /// convex edges fit together while preserving a small visible corridor.
+    /// Produces fitted trios center-out, then expands their origins in an
+    /// oblique hexagonal spiral matching the supplied Figma composition.
     static func lots(count: Int, canvasSize: CGSize) -> [SanctuaryMapLot] {
+        let relativeLots = relativeLots(count: count)
+        guard let bounds = pointBounds(of: relativeLots) else { return [] }
+
+        let layoutCenter = CGPoint(x: bounds.midX, y: bounds.midY)
+        let canvasCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        return relativeLots.enumerated().map { index, lot in
+            SanctuaryMapLot(
+                id: index,
+                position: CGPoint(
+                    x: canvasCenter.x + lot.position.x - layoutCenter.x,
+                    y: canvasCenter.y + lot.position.y - layoutCenter.y
+                ),
+                rotation: lot.rotation
+            )
+        }
+    }
+
+    private static func relativeLots(count: Int) -> [RelativeLot] {
         guard count > 0 else { return [] }
 
-        let radius = ringRadius(for: count)
+        let trioCount = Int(ceil(Double(count) / Double(trioMembers.count)))
+        let radius = ringRadius(for: trioCount)
 
         var coordinates: [AxialCoordinate] = []
         for q in -radius...radius {
@@ -302,17 +329,46 @@ enum SanctuaryMapLayout {
             return $0.clockwiseOrder < $1.clockwiseOrder
         }
 
-        let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-        return coordinates.prefix(count).enumerated().map { index, coordinate in
-            SanctuaryMapLot(
-                id: index,
-                position: CGPoint(
-                    x: center.x + coordinate.point.x,
-                    y: center.y + coordinate.point.y
-                ),
-                rotation: coordinate.rotation
-            )
+        var result: [RelativeLot] = []
+        result.reserveCapacity(count)
+
+        for coordinate in coordinates.prefix(trioCount) {
+            for member in trioMembers where result.count < count {
+                result.append(
+                    RelativeLot(
+                        position: CGPoint(
+                            x: coordinate.point.x + member.offset.x,
+                            y: coordinate.point.y + member.offset.y
+                        ),
+                        rotation: member.rotation
+                    )
+                )
+            }
         }
+        return result
+    }
+
+    private static func pointBounds(of lots: [RelativeLot]) -> CGRect? {
+        guard let first = lots.first else { return nil }
+
+        var minimumX = first.position.x
+        var maximumX = first.position.x
+        var minimumY = first.position.y
+        var maximumY = first.position.y
+
+        for lot in lots.dropFirst() {
+            minimumX = min(minimumX, lot.position.x)
+            maximumX = max(maximumX, lot.position.x)
+            minimumY = min(minimumY, lot.position.y)
+            maximumY = max(maximumY, lot.position.y)
+        }
+
+        return CGRect(
+            x: minimumX,
+            y: minimumY,
+            width: maximumX - minimumX,
+            height: maximumY - minimumY
+        )
     }
 
     private static func ringRadius(for count: Int) -> Int {

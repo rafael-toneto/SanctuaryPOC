@@ -366,7 +366,7 @@ final class SanctuaryRulesTests: XCTestCase {
         XCTAssertEqual(restored.terrain(withID: created.id)?.mapSlot, 8)
     }
 
-    func testAlgorithmicMapUsesTheThreeFittingRotations() throws {
+    func testAlgorithmicMapRepeatsTheFittedFigmaTrio() throws {
         let lots = SanctuaryMapLayout.lots(
             count: 24,
             canvasSize: CGSize(width: 1_360, height: 1_360)
@@ -376,18 +376,26 @@ final class SanctuaryRulesTests: XCTestCase {
         for index in lots.indices {
             XCTAssertFalse(lots[..<index].contains { $0.position == lots[index].position })
         }
-        XCTAssertEqual(lots[0].rotation.degrees, 0, accuracy: 0.000_001)
-        XCTAssertEqual(lots[1].rotation.degrees, -120, accuracy: 0.000_001)
-        XCTAssertEqual(lots[2].rotation.degrees, 120, accuracy: 0.000_001)
 
         let rotations = Set(lots.map { Int($0.rotation.degrees.rounded()) })
-        XCTAssertEqual(rotations, Set([0, -120, 120]))
+        XCTAssertEqual(rotations, Set([0, -121, 120]))
 
-        let firstNeighborDistance = hypot(
-            lots[1].position.x - lots[0].position.x,
-            lots[1].position.y - lots[0].position.y
-        )
-        XCTAssertEqual(firstNeighborDistance, SanctuaryMapLayout.centerSpacing, accuracy: 0.000_001)
+        for trioStart in stride(from: 0, to: lots.count, by: 3) {
+            let trio = lots[trioStart..<min(trioStart + 3, lots.count)]
+            XCTAssertEqual(lots[trioStart].rotation.degrees, 120, accuracy: 0.000_001)
+
+            guard trio.count == 3 else { continue }
+            let first = lots[trioStart]
+            let second = lots[trioStart + 1]
+            let third = lots[trioStart + 2]
+
+            XCTAssertEqual(second.rotation.degrees, 0, accuracy: 0.000_001)
+            XCTAssertEqual(third.rotation.degrees, -121, accuracy: 0.000_001)
+            XCTAssertEqual(second.position.x - first.position.x, -95, accuracy: 0.000_001)
+            XCTAssertEqual(second.position.y - first.position.y, 106, accuracy: 0.000_001)
+            XCTAssertEqual(third.position.x - first.position.x, 45, accuracy: 0.000_001)
+            XCTAssertEqual(third.position.y - first.position.y, 135, accuracy: 0.000_001)
+        }
     }
 
     func testPendingUpgradeCannotChargeWallet() throws {
