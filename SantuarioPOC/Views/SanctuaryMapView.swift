@@ -1,6 +1,33 @@
 import SwiftUI
 import UIKit
 
+private final class SanctuaryMapGestureGate: ObservableObject {
+    private(set) var suppressesLotActions = false
+    private var releaseWorkItem: DispatchWorkItem?
+
+    func beginPinch() {
+        releaseWorkItem?.cancel()
+        suppressesLotActions = true
+    }
+
+    func finishPinch() {
+        releaseWorkItem?.cancel()
+
+        // SwiftUI can finish a Button's touch sequence just after UIKit reports
+        // the pinch as ended. Keep actions blocked through that short window so
+        // lifting the last finger can never be interpreted as a terrain tap.
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.suppressesLotActions = false
+        }
+        releaseWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: workItem)
+    }
+
+    deinit {
+        releaseWorkItem?.cancel()
+    }
+}
+
 struct SanctuaryMapView: View {
     @ObservedObject var store: SanctuaryStore
     let openTerrain: (Terrain) -> Void
@@ -12,6 +39,7 @@ struct SanctuaryMapView: View {
     @State private var selectedUndefinedLotID: Int?
     @State private var committedZoom: CGFloat = 1
     @State private var centerRequest = 0
+    @StateObject private var gestureGate = SanctuaryMapGestureGate()
 
     private var lotCount: Int {
         let lastOccupiedSlot = store.state.terrains.compactMap(\.mapSlot).max() ?? -1
@@ -35,7 +63,8 @@ struct SanctuaryMapView: View {
                 centerRequest: centerRequest,
                 minimumZoomScale: minimumZoom,
                 maximumZoomScale: maximumZoom,
-                canvasSize: canvasSize
+                canvasSize: canvasSize,
+                gestureGate: gestureGate
             ) {
                 ZStack(alignment: .topLeading) {
                     SanctuaryMapBackdrop()
@@ -118,13 +147,20 @@ struct SanctuaryMapView: View {
                 store: store,
                 terrain: terrain,
                 rotation: lot.rotation,
-                open: { openTerrain(terrain) },
-                collect: { collect(terrain) }
+                open: {
+                    guard !gestureGate.suppressesLotActions else { return }
+                    openTerrain(terrain)
+                },
+                collect: {
+                    guard !gestureGate.suppressesLotActions else { return }
+                    collect(terrain)
+                }
             )
         } else {
             UndefinedTerrainLot(
                 rotation: lot.rotation,
                 chooseBiome: {
+                    guard !gestureGate.suppressesLotActions else { return }
                     selectedUndefinedLotID = lot.id
                     SanctuaryHaptics.selection()
                 }
@@ -387,6 +423,19 @@ private final class SanctuaryMapUIScrollView: UIScrollView {
     }
 }
 
+/// Observes a pinch even when it starts over a SwiftUI Button, but never
+/// prevents another recognizer. The native UIScrollView pinch remains solely
+/// responsible for scale, focal point and content offset.
+private final class SanctuaryMapPinchGestureRecognizer: UIPinchGestureRecognizer {
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+}
+
 private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
     @Binding var zoomScale: CGFloat
 
@@ -394,6 +443,7 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
     let minimumZoomScale: CGFloat
     let maximumZoomScale: CGFloat
     let canvasSize: CGSize
+    let gestureGate: SanctuaryMapGestureGate
     let content: Content
 
     init(
@@ -402,6 +452,7 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         minimumZoomScale: CGFloat,
         maximumZoomScale: CGFloat,
         canvasSize: CGSize,
+        gestureGate: SanctuaryMapGestureGate,
         @ViewBuilder content: () -> Content
     ) {
         _zoomScale = zoomScale
@@ -409,11 +460,12 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         self.minimumZoomScale = minimumZoomScale
         self.maximumZoomScale = maximumZoomScale
         self.canvasSize = canvasSize
+        self.gestureGate = gestureGate
         self.content = content()
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(zoomScale: $zoomScale)
+        Coordinator(zoomScale: $zoomScale, gestureGate: gestureGate)
     }
 
     func makeUIView(context: Context) -> SanctuaryMapUIScrollView {
@@ -426,13 +478,23 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         scrollView.canCancelContentTouches = true
         scrollView.delaysContentTouches = false
         scrollView.bounces = true
-        scrollView.bouncesZoom = true
+        scrollView.bouncesZoom = false
         scrollView.decelerationRate = .fast
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.backgroundColor = .clear
+        scrollView.pinchGestureRecognizer?.isEnabled = true
         scrollView.pinchGestureRecognizer?.cancelsTouchesInView = true
+
+        let mapPinchGestureRecognizer = SanctuaryMapPinchGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.observeMapPinch(_:))
+        )
+        mapPinchGestureRecognizer.delegate = context.coordinator
+        mapPinchGestureRecognizer.cancelsTouchesInView = true
+        mapPinchGestureRecognizer.delaysTouchesBegan = false
+        scrollView.addGestureRecognizer(mapPinchGestureRecognizer)
 
         let hostingController = UIHostingController(rootView: content)
         hostingController.view.backgroundColor = .clear
@@ -466,12 +528,15 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         context.coordinator.hostingController = hostingController
         context.coordinator.widthConstraint = widthConstraint
         context.coordinator.heightConstraint = heightConstraint
+        context.coordinator.scrollView = scrollView
+        context.coordinator.mapPinchGestureRecognizer = mapPinchGestureRecognizer
         return scrollView
     }
 
     func updateUIView(_ scrollView: SanctuaryMapUIScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.zoomScale = $zoomScale
+        coordinator.gestureGate = gestureGate
         coordinator.hostingController?.rootView = content
         coordinator.widthConstraint?.constant = canvasSize.width
         coordinator.heightConstraint?.constant = canvasSize.height
@@ -480,7 +545,12 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         scrollView.maximumZoomScale = maximumZoomScale
 
         let requestedZoom = min(maximumZoomScale, max(minimumZoomScale, zoomScale))
-        if !scrollView.isZooming,
+        coordinator.reconcilePinchCommit(
+            requestedZoom: requestedZoom,
+            in: scrollView
+        )
+        if !coordinator.isMapPinching,
+           !scrollView.isZooming,
            !scrollView.isZoomBouncing,
            abs(scrollView.zoomScale - requestedZoom) > 0.001 {
             coordinator.isApplyingSwiftUIUpdate = true
@@ -507,23 +577,95 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         _ scrollView: SanctuaryMapUIScrollView,
         coordinator: Coordinator
     ) {
+        if let mapPinchGestureRecognizer = coordinator.mapPinchGestureRecognizer {
+            scrollView.removeGestureRecognizer(mapPinchGestureRecognizer)
+        }
         scrollView.delegate = nil
     }
 
-    final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var zoomScale: Binding<CGFloat>
+        var gestureGate: SanctuaryMapGestureGate
         var hostingController: UIHostingController<Content>?
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
+        weak var scrollView: SanctuaryMapUIScrollView?
+        weak var mapPinchGestureRecognizer: SanctuaryMapPinchGestureRecognizer?
         var lastCenterRequest: Int?
         var isApplyingSwiftUIUpdate = false
 
-        init(zoomScale: Binding<CGFloat>) {
+        private var isPinchLifecycleActive = false
+        private var pinchSettlementWorkItem: DispatchWorkItem?
+
+        var isMapPinching: Bool {
+            isPinchLifecycleActive
+                || mapPinchGestureRecognizer?.state == .began
+                || mapPinchGestureRecognizer?.state == .changed
+        }
+
+        init(zoomScale: Binding<CGFloat>, gestureGate: SanctuaryMapGestureGate) {
             self.zoomScale = zoomScale
+            self.gestureGate = gestureGate
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             hostingController?.view
+        }
+
+        @objc func observeMapPinch(_ gestureRecognizer: UIPinchGestureRecognizer) {
+            switch gestureRecognizer.state {
+            case .began:
+                pinchSettlementWorkItem?.cancel()
+                isPinchLifecycleActive = true
+                gestureGate.beginPinch()
+
+            case .ended:
+                if let scrollView {
+                    commitCurrentZoom(from: scrollView)
+                }
+                gestureGate.finishPinch()
+                settlePinchAfterBindingUpdate()
+
+            case .cancelled:
+                if let scrollView {
+                    commitCurrentZoom(from: scrollView)
+                }
+                gestureGate.finishPinch()
+                settlePinchAfterBindingUpdate()
+
+            case .failed:
+                gestureGate.finishPinch()
+                isPinchLifecycleActive = false
+
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard let nativePinch = scrollView?.pinchGestureRecognizer else { return false }
+            return gestureRecognizer === nativePinch || otherGestureRecognizer === nativePinch
+        }
+
+        /// A Button changing from pressed to released can update SwiftUI after
+        /// the recognizer reaches `.ended`, but before the new zoom binding is
+        /// delivered back to this representable. Until both values match, an
+        /// update contains the stale pre-pinch scale and must not be applied.
+        func reconcilePinchCommit(
+            requestedZoom: CGFloat,
+            in scrollView: UIScrollView
+        ) {
+            guard isPinchLifecycleActive else { return }
+            let recognizerState = mapPinchGestureRecognizer?.state
+            guard recognizerState != .began, recognizerState != .changed else { return }
+            guard abs(scrollView.zoomScale - requestedZoom) <= 0.001 else { return }
+
+            pinchSettlementWorkItem?.cancel()
+            pinchSettlementWorkItem = nil
+            isPinchLifecycleActive = false
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -536,20 +678,25 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
             atScale scale: CGFloat
         ) {
             guard !isApplyingSwiftUIUpdate else { return }
-            if abs(zoomScale.wrappedValue - scale) > 0.001 {
-                zoomScale.wrappedValue = scale
-            }
+            commitCurrentZoom(from: scrollView)
         }
 
         func updateContentInsets(in scrollView: UIScrollView) {
             let horizontalInset = max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2)
             let verticalInset = max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2)
-            scrollView.contentInset = UIEdgeInsets(
+            let updatedInsets = UIEdgeInsets(
                 top: verticalInset,
                 left: horizontalInset,
                 bottom: verticalInset,
                 right: horizontalInset
             )
+            let currentInsets = scrollView.contentInset
+            guard abs(currentInsets.top - updatedInsets.top) > 0.001
+                    || abs(currentInsets.left - updatedInsets.left) > 0.001
+                    || abs(currentInsets.bottom - updatedInsets.bottom) > 0.001
+                    || abs(currentInsets.right - updatedInsets.right) > 0.001
+            else { return }
+            scrollView.contentInset = updatedInsets
         }
 
         func centerContent(in scrollView: UIScrollView, animated: Bool) {
@@ -558,6 +705,30 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
                 y: (scrollView.contentSize.height - scrollView.bounds.height) / 2
             )
             scrollView.setContentOffset(offset, animated: animated)
+        }
+
+        private func settlePinchAfterBindingUpdate() {
+            pinchSettlementWorkItem?.cancel()
+
+            // Normally updateUIView reconciles and clears the lifecycle on the
+            // next render. The fallback also covers a pinch whose scale changed
+            // by less than the binding tolerance and caused no render at all.
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.isPinchLifecycleActive = false
+                self?.pinchSettlementWorkItem = nil
+            }
+            pinchSettlementWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+        }
+
+        private func commitCurrentZoom(from scrollView: UIScrollView) {
+            let scale = scrollView.zoomScale
+            guard abs(zoomScale.wrappedValue - scale) > 0.001 else { return }
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                zoomScale.wrappedValue = scale
+            }
         }
     }
 }
@@ -575,33 +746,40 @@ private struct SanctuaryTerrainLot: View {
 
     var body: some View {
         ZStack {
-            Button(action: open) {
-                ZStack {
-                    Image(terrain.biome.mapAssetName)
-                        .resizable()
-                        .scaledToFit()
-                        .rotationEffect(rotation)
-                        .shadow(color: terrain.biome.mapColor.opacity(0.3), radius: 16, y: 9)
+            ZStack {
+                Image(terrain.biome.mapAssetName)
+                    .resizable()
+                    .scaledToFit()
+                    .rotationEffect(rotation)
+                    .shadow(color: terrain.biome.mapColor.opacity(0.3), radius: 16, y: 9)
 
-                    lotSummary
-                }
+                lotSummary
             }
-            .buttonStyle(MapLotButtonStyle())
+            .contentShape(Rectangle())
+            .onTapGesture(perform: open)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                open()
+            }
 
             if terrain.isUnlocked, collectableAmount > 0 {
-                Button(action: collect) {
-                    Label(collectableAmount.formatted(), systemImage: "sparkles")
-                        .font(.caption.bold())
-                        .foregroundStyle(SanctuaryTheme.ink)
-                        .padding(.horizontal, 9)
-                        .frame(minHeight: 36)
-                        .background(SanctuaryTheme.lime, in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.5)))
-                        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-                }
-                .buttonStyle(.plain)
-                .offset(x: 70, y: -76)
-                .accessibilityLabel("Coletar (collectableAmount) recursos do terreno (terrain.biome.title)")
+                Label(collectableAmount.formatted(), systemImage: "sparkles")
+                    .font(.caption.bold())
+                    .foregroundStyle(SanctuaryTheme.ink)
+                    .padding(.horizontal, 9)
+                    .frame(minHeight: 36)
+                    .background(SanctuaryTheme.lime, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.5)))
+                    .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                    .contentShape(Capsule())
+                    .onTapGesture(perform: collect)
+                    .offset(x: 70, y: -76)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction {
+                        collect()
+                    }
+                    .accessibilityLabel("Coletar \(collectableAmount) recursos do terreno \(terrain.biome.title)")
             }
         }
         .accessibilityElement(children: .contain)
@@ -645,32 +823,35 @@ private struct UndefinedTerrainLot: View {
     let chooseBiome: () -> Void
 
     var body: some View {
-        Button(action: chooseBiome) {
-            ZStack {
-                Image("TerrainUndefined")
-                    .resizable()
-                    .scaledToFit()
-                    .rotationEffect(rotation)
-                    .opacity(0.88)
-                    .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
+        ZStack {
+            Image("TerrainUndefined")
+                .resizable()
+                .scaledToFit()
+                .rotationEffect(rotation)
+                .opacity(0.88)
+                .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
 
-                VStack(spacing: 4) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.caption.bold())
-                    Text("ESCOLHER BIOMA")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .tracking(0.5)
-                }
-                .foregroundStyle(SanctuaryTheme.ink.opacity(0.78))
-                .padding(8)
-                .background(.white.opacity(0.86), in: Capsule())
-                .overlay(Capsule().stroke(SanctuaryTheme.ink.opacity(0.14)))
+            VStack(spacing: 4) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.caption.bold())
+                Text("ESCOLHER BIOMA")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .tracking(0.5)
             }
+            .foregroundStyle(SanctuaryTheme.ink.opacity(0.78))
+            .padding(8)
+            .background(.white.opacity(0.86), in: Capsule())
+            .overlay(Capsule().stroke(SanctuaryTheme.ink.opacity(0.14)))
         }
-        .buttonStyle(MapLotButtonStyle())
+        .contentShape(Rectangle())
+        .onTapGesture(perform: chooseBiome)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Terreno sem tipo")
         .accessibilityHint("Toque para escolher o bioma deste terreno")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            chooseBiome()
+        }
     }
 }
 
@@ -693,15 +874,6 @@ private struct MapLegendItem: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(SanctuaryTheme.cream)
         }
-    }
-}
-
-private struct MapLotButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .brightness(configuration.isPressed ? -0.08 : 0)
-            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
     }
 }
 
