@@ -13,6 +13,13 @@ enum SanctuaryTheme {
 }
 
 extension Biome {
+    var mapTitle: String {
+        switch self {
+        case .grassland: "Planície"
+        default: title
+        }
+    }
+
     var symbolName: String {
         switch self {
         case .aquatic: "water.waves"

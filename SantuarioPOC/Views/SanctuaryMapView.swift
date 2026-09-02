@@ -119,24 +119,20 @@ struct SanctuaryMapView: View {
             }
             .padding(12)
         }
-        .confirmationDialog(
-            "Definir tipo de terreno",
+        .sheet(
             isPresented: Binding(
                 get: { selectedUndefinedLotID != nil },
                 set: { if !$0 { selectedUndefinedLotID = nil } }
-            ),
-            titleVisibility: .visible
+            )
         ) {
-            ForEach(Biome.allCases) { biome in
-                Button(biome.mapTitle) {
+            BiomeSelectionSheet { biome in
+                if selectedUndefinedLotID != nil {
                     defineSelectedLot(as: biome)
                 }
             }
-            Button("Cancelar", role: .cancel) {
-                selectedUndefinedLotID = nil
-            }
-        } message: {
-            Text("Escolha o bioma. O novo terreno ficará disponível imediatamente.")
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(SanctuaryTheme.ink)
         }
     }
 
@@ -185,7 +181,6 @@ struct SanctuaryMapView: View {
 
     private func defineSelectedLot(as biome: Biome) {
         guard let mapSlot = selectedUndefinedLotID else { return }
-        selectedUndefinedLotID = nil
         if case .success = store.defineTerrain(biome: biome, atMapSlot: mapSlot) {
             SanctuaryHaptics.success()
         }
@@ -944,12 +939,6 @@ private extension Biome {
         }
     }
 
-    var mapTitle: String {
-        switch self {
-        case .grassland: "Planície"
-        default: title
-        }
-    }
 }
 
 #Preview("Mapa do santuário") {
