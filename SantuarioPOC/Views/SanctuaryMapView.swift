@@ -583,7 +583,11 @@ private struct SanctuaryTerrainLot: View {
                         .rotationEffect(rotation)
                         .shadow(color: terrain.biome.mapColor.opacity(0.3), radius: 16, y: 9)
 
-                    lotSummary
+                    if terrain.isUnlocked, let species = species {
+                        ForEach(residents) { resident in
+                            WanderingAnimalView(animal: species.spriteName)
+                        }
+                    }
                 }
             }
             .buttonStyle(MapLotButtonStyle())
@@ -605,38 +609,6 @@ private struct SanctuaryTerrainLot: View {
             }
         }
         .accessibilityElement(children: .contain)
-    }
-
-    private var lotSummary: some View {
-        VStack(spacing: 6) {
-            Label(terrain.biome.mapTitle, systemImage: terrain.biome.symbolName)
-                .font(.caption2.bold())
-                .tracking(0.3)
-
-            if terrain.isUnlocked {
-                if let species {
-                    HStack(spacing: 6) {
-                        Text(species.symbol)
-                            .font(.title3)
-                        Text("\(residents.count)/\(store.capacity(of: terrain))")
-                            .font(.caption.bold())
-                    }
-                } else {
-                    Label("Disponível", systemImage: "plus.circle.fill")
-                        .font(.caption2.weight(.semibold))
-                }
-            } else {
-                Label("Expandir", systemImage: "lock.fill")
-                    .font(.caption2.weight(.semibold))
-            }
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
-        .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 15).stroke(.white.opacity(0.22)))
-        .shadow(color: .black.opacity(0.22), radius: 6, y: 3)
-        .frame(maxWidth: 150)
     }
 }
 
@@ -796,4 +768,50 @@ private final class PreviewSanctuaryPersistence: SanctuaryPersisting {
     func load() -> SanctuaryState? { nil }
     func save(_ state: SanctuaryState) {}
     func clear() {}
+}
+
+private struct AnimalSpriteView: View {
+    let animal: String
+    let t: TimeInterval
+
+    var body: some View {
+        let frameCount = animal == "fox" ? 4 : 6
+        let action = animal == "fox" ? "idle" : "walking"
+        let currentFrame = (Int(t * 6.0) % frameCount) + 1
+        
+        Image("\(animal)-\(action)-\(currentFrame)")
+            .resizable()
+            .scaledToFit()
+            .shadow(color: .black.opacity(0.4), radius: 3, x: 0, y: 2)
+    }
+}
+
+private extension SpeciesDefinition {
+    var spriteName: String {
+        switch self.id {
+        case "peixe-boi-demo", "jacare-demo":
+            return "octopus"
+        default:
+            return "fox"
+        }
+    }
+}
+
+private struct WanderingAnimalView: View {
+    let animal: String
+
+    let centerX = CGFloat.random(in: -30...30)
+    let centerY = CGFloat.random(in: -20...20)
+    let isFacingLeft = Bool.random()
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            
+            AnimalSpriteView(animal: animal, t: t)
+                .frame(width: 48, height: 48)
+                .scaleEffect(x: isFacingLeft ? -1 : 1, y: 1)
+                .offset(x: centerX, y: centerY - 10)
+        }
+    }
 }

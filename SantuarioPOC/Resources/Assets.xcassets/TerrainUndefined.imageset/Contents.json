@@ -1,15 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "undefined.png",
+      "filename" : "Santuário 10.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
+      "filename" : "Santuário 11.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
+      "filename" : "Santuário 12.png",
       "idiom" : "universal",
       "scale" : "3x"
     }
