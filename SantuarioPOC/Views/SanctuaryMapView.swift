@@ -72,8 +72,8 @@ struct SanctuaryMapView: View {
                     ForEach(lots) { lot in
                         lotView(for: lot)
                             .frame(
-                                width: SanctuaryMapLayout.lotSize.width,
-                                height: SanctuaryMapLayout.lotSize.height
+                                width: SanctuaryMapLayout.lotInteractionSize.width,
+                                height: SanctuaryMapLayout.lotInteractionSize.height
                             )
                             .position(lot.position)
                             .zIndex(terrain(at: lot.id) == nil ? 0 : 2)
@@ -145,6 +145,7 @@ struct SanctuaryMapView: View {
                 rotation: lot.rotation,
                 open: {
                     guard !gestureGate.suppressesLotActions else { return }
+                    SanctuaryHaptics.selection()
                     openTerrain(terrain)
                 },
                 collect: {
@@ -253,6 +254,13 @@ struct SanctuaryMapLot: Identifiable {
 
 enum SanctuaryMapLayout {
     static let lotSize = CGSize(width: 224, height: 276)
+    /// A rotated asset can extend beyond `lotSize`. The view needs a square
+    /// large enough to contain every rotation so its organic hit shape is not
+    /// clipped back to the unrotated image bounds.
+    static let lotInteractionSize: CGSize = {
+        let side = ceil(hypot(lotSize.width, lotSize.height))
+        return CGSize(width: side, height: side)
+    }()
     private static let minimumCanvasSide: CGFloat = 1_360
     private static let canvasPadding: CGFloat = 40
 
@@ -750,7 +758,15 @@ private struct SanctuaryTerrainLot: View {
 
                 lotSummary
             }
-            .contentShape(Rectangle())
+            .frame(
+                width: SanctuaryMapLayout.lotSize.width,
+                height: SanctuaryMapLayout.lotSize.height
+            )
+            .frame(
+                width: SanctuaryMapLayout.lotInteractionSize.width,
+                height: SanctuaryMapLayout.lotInteractionSize.height
+            )
+            .contentShape(TerrainInteractionShape(rotation: rotation))
             .onTapGesture(perform: open)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
@@ -838,7 +854,15 @@ private struct UndefinedTerrainLot: View {
             .background(.white.opacity(0.86), in: Capsule())
             .overlay(Capsule().stroke(SanctuaryTheme.ink.opacity(0.14)))
         }
-        .contentShape(Rectangle())
+        .frame(
+            width: SanctuaryMapLayout.lotSize.width,
+            height: SanctuaryMapLayout.lotSize.height
+        )
+        .frame(
+            width: SanctuaryMapLayout.lotInteractionSize.width,
+            height: SanctuaryMapLayout.lotInteractionSize.height
+        )
+        .contentShape(TerrainInteractionShape(rotation: rotation))
         .onTapGesture(perform: chooseBiome)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Terreno sem tipo")
@@ -847,6 +871,74 @@ private struct UndefinedTerrainLot: View {
         .accessibilityAction {
             chooseBiome()
         }
+    }
+}
+
+/// A compact approximation of the opaque part shared by all terrain PNGs.
+/// Keeping the path slightly inside the feathered edge avoids ambiguous taps
+/// in the transparent corners while preserving a generous target in the lot.
+private struct TerrainInteractionShape: Shape {
+    let rotation: Angle
+
+    private static let normalizedOutline = [
+        CGPoint(x: 0.34, y: 0.09),
+        CGPoint(x: 0.40, y: 0.08),
+        CGPoint(x: 0.45, y: 0.15),
+        CGPoint(x: 0.48, y: 0.31),
+        CGPoint(x: 0.53, y: 0.36),
+        CGPoint(x: 0.77, y: 0.40),
+        CGPoint(x: 0.89, y: 0.46),
+        CGPoint(x: 0.95, y: 0.56),
+        CGPoint(x: 0.92, y: 0.66),
+        CGPoint(x: 0.80, y: 0.75),
+        CGPoint(x: 0.71, y: 0.84),
+        CGPoint(x: 0.70, y: 0.95),
+        CGPoint(x: 0.63, y: 0.98),
+        CGPoint(x: 0.53, y: 0.95),
+        CGPoint(x: 0.47, y: 0.87),
+        CGPoint(x: 0.44, y: 0.73),
+        CGPoint(x: 0.36, y: 0.67),
+        CGPoint(x: 0.13, y: 0.59),
+        CGPoint(x: 0.07, y: 0.53),
+        CGPoint(x: 0.07, y: 0.43),
+        CGPoint(x: 0.12, y: 0.34),
+        CGPoint(x: 0.23, y: 0.24),
+        CGPoint(x: 0.29, y: 0.13)
+    ]
+
+    func path(in rect: CGRect) -> Path {
+        let imageRect = CGRect(
+            x: rect.midX - SanctuaryMapLayout.lotSize.width / 2,
+            y: rect.midY - SanctuaryMapLayout.lotSize.height / 2,
+            width: SanctuaryMapLayout.lotSize.width,
+            height: SanctuaryMapLayout.lotSize.height
+        )
+        let center = CGPoint(x: imageRect.midX, y: imageRect.midY)
+        let radians = CGFloat(rotation.radians)
+        let cosine = cos(radians)
+        let sine = sin(radians)
+
+        func point(for normalizedPoint: CGPoint) -> CGPoint {
+            let point = CGPoint(
+                x: imageRect.minX + normalizedPoint.x * imageRect.width,
+                y: imageRect.minY + normalizedPoint.y * imageRect.height
+            )
+            let deltaX = point.x - center.x
+            let deltaY = point.y - center.y
+            return CGPoint(
+                x: center.x + deltaX * cosine - deltaY * sine,
+                y: center.y + deltaX * sine + deltaY * cosine
+            )
+        }
+
+        var path = Path()
+        guard let firstPoint = Self.normalizedOutline.first else { return path }
+        path.move(to: point(for: firstPoint))
+        for outlinePoint in Self.normalizedOutline.dropFirst() {
+            path.addLine(to: point(for: outlinePoint))
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
