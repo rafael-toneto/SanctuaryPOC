@@ -28,18 +28,14 @@ struct SanctuaryView: View {
         ZStack {
             SanctuaryBackdrop()
 
-            VStack(spacing: 0) {
-                mapOverview
-
-                SanctuaryMapView(
-                    store: store,
-                    showMapBadges: showMapBadges,
-                    openTerrain: { activeSheet = .terrain($0.id) },
-                    collect: { terrain in
-                        if store.collect(from: terrain.id) > 0 { SanctuaryHaptics.success() }
-                    }
-                )
-            }
+            SanctuaryMapView(
+                store: store,
+                showMapBadges: showMapBadges,
+                openTerrain: { activeSheet = .terrain($0.id) },
+                collect: { terrain in
+                    if store.collect(from: terrain.id) > 0 { SanctuaryHaptics.success() }
+                }
+            )
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             header
@@ -134,61 +130,6 @@ struct SanctuaryView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
         }
-    }
-
-    private var mapOverview: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("MAPA DO SANTUÁRIO")
-                    .font(.caption2.bold())
-                    .tracking(1.3)
-                    .foregroundStyle(SanctuaryTheme.lime)
-                Text("Terrenos em expansão")
-                    .font(.headline.bold())
-                    .foregroundStyle(SanctuaryTheme.cream)
-            }
-
-            Spacer(minLength: 4)
-
-            compactMetric(
-                icon: "square.grid.2x2.fill",
-                value: "\(store.unlockedTerrainCount)/\(store.state.terrains.count)",
-                label: "ATIVOS"
-            )
-            compactMetric(
-                icon: "pawprint.fill",
-                value: store.accommodatedAnimalCount.formatted(),
-                label: "ANIMAIS"
-            )
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(SanctuaryTheme.deepForest.opacity(0.94))
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
-        }
-    }
-
-    private func compactMetric(icon: String, value: String, label: String) -> some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.caption2)
-                    .foregroundStyle(SanctuaryTheme.lime)
-                Text(value)
-                    .font(.caption.bold())
-                    .contentTransition(.numericText())
-            }
-            Text(label)
-                .font(.system(size: 8, weight: .bold))
-                .tracking(0.5)
-                .foregroundStyle(.secondary)
-        }
-        .frame(minWidth: 52)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.08)))
     }
 
     private var bottomBar: some View {

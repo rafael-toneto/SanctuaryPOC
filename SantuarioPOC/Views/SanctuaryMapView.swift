@@ -115,8 +115,6 @@ struct SanctuaryMapView: View {
             .background(SanctuaryTheme.ink)
             .accessibilityLabel("Mapa navegável do santuário")
 
-            mapInstructions
-
             VStack {
                 HStack {
                     Spacer()
@@ -146,7 +144,6 @@ struct SanctuaryMapView: View {
                 }
 
                 Spacer()
-                mapLegend
             }
             .padding(12)
         }
@@ -236,45 +233,6 @@ struct SanctuaryMapView: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private var mapInstructions: some View {
-        VStack {
-            HStack {
-                Label("Arraste • belisque", systemImage: "hand.draw.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(SanctuaryTheme.cream)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(SanctuaryTheme.ink.opacity(0.84), in: Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.12)))
-                    .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-                    .accessibilityHidden(true)
-                Spacer()
-            }
-            Spacer()
-        }
-        .padding(12)
-        .allowsHitTesting(false)
-    }
-
-    private var mapLegend: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 12) {
-                ForEach(Biome.allCases) { biome in
-                    MapLegendItem(color: biome.mapColor, title: biome.mapTitle)
-                }
-                MapLegendItem(color: .white, title: "A definir", hasBorder: true)
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 10)
-        }
-        .scrollIndicators(.hidden)
-        .background(SanctuaryTheme.ink.opacity(0.88), in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.13)))
-        .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
-        .frame(maxWidth: 520)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Legenda: azul aquático, verde-água úmido, verde floresta, verde amarelado planície e branco a definir")
-    }
 }
 
 struct SanctuaryMapLot: Identifiable {
@@ -1069,28 +1027,6 @@ private struct TerrainInteractionShape: Shape {
         }
         path.closeSubpath()
         return path
-    }
-}
-
-private struct MapLegendItem: View {
-    let color: Color
-    let title: String
-    var hasBorder = false
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(color)
-                .frame(width: 10, height: 10)
-                .overlay {
-                    if hasBorder {
-                        Circle().stroke(.black.opacity(0.3), lineWidth: 1)
-                    }
-                }
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(SanctuaryTheme.cream)
-        }
     }
 }
 
