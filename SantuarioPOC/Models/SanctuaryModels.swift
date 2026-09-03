@@ -293,56 +293,23 @@ struct SanctuaryState: Codable, Equatable {
         ]
 
         let animals = [
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001001")!,
-                speciesID: "lobo-guara-demo",
-                location: .terrain(grasslandID)
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001002")!,
-                speciesID: "lobo-guara-demo",
-                location: .terrain(grasslandID)
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001003")!,
-                speciesID: "lobo-guara-demo",
-                location: .waiting
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001004")!,
-                speciesID: "tamandua-demo",
-                location: .waiting
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001005")!,
-                speciesID: "mico-leao-demo",
-                location: .waiting
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001006")!,
-                speciesID: "mico-leao-demo",
-                location: .waiting
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001007")!,
-                speciesID: "jacare-demo",
-                location: .terrain(wetlandID)
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001008")!,
-                speciesID: "jacare-demo",
-                location: .waiting
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001009")!,
-                speciesID: "peixe-boi-demo",
-                location: .waiting
-            ),
-            AnimalInstance(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000001010")!,
-                speciesID: "peixe-boi-demo",
-                location: .waiting
-            )
+            // Grassland (4 animals)
+            AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
+            AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
+            AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
+            AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
+
+            // Forest (4 animals)
+            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
+            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
+            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
+            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
+
+            // Wetland (4 animals)
+            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID)),
+            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID)),
+            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID)),
+            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID))
         ]
 
         return SanctuaryState(

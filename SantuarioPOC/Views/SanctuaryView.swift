@@ -20,6 +20,7 @@ struct SanctuaryView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var activeSheet: SanctuarySheet?
+    @AppStorage("showMapBadges") private var showMapBadges: Bool = true
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -32,6 +33,7 @@ struct SanctuaryView: View {
 
                 SanctuaryMapView(
                     store: store,
+                    showMapBadges: showMapBadges,
                     openTerrain: { activeSheet = .terrain($0.id) },
                     collect: { terrain in
                         if store.collect(from: terrain.id) > 0 { SanctuaryHaptics.success() }
@@ -97,6 +99,18 @@ struct SanctuaryView: View {
             }
 
             Spacer()
+
+            Button {
+                showMapBadges.toggle()
+                SanctuaryHaptics.selection()
+            } label: {
+                Image(systemName: showMapBadges ? "eye.fill" : "eye.slash.fill")
+                    .font(.title3)
+                    .foregroundStyle(SanctuaryTheme.cream)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 44, height: 44)
+            .accessibilityLabel(showMapBadges ? "Ocultar indicadores" : "Mostrar indicadores")
 
             if store.totalCollectableResources > 0 {
                 Button {

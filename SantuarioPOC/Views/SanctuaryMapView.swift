@@ -1,8 +1,36 @@
 import SwiftUI
 import UIKit
 
+private final class SanctuaryMapGestureGate: ObservableObject {
+    private(set) var suppressesLotActions = false
+    private var releaseWorkItem: DispatchWorkItem?
+
+    func beginPinch() {
+        releaseWorkItem?.cancel()
+        suppressesLotActions = true
+    }
+
+    func finishPinch() {
+        releaseWorkItem?.cancel()
+
+        // SwiftUI can finish a Button's touch sequence just after UIKit reports
+        // the pinch as ended. Keep actions blocked through that short window so
+        // lifting the last finger can never be interpreted as a terrain tap.
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.suppressesLotActions = false
+        }
+        releaseWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: workItem)
+    }
+
+    deinit {
+        releaseWorkItem?.cancel()
+    }
+}
+
 struct SanctuaryMapView: View {
     @ObservedObject var store: SanctuaryStore
+    var showMapBadges: Bool = true
     let openTerrain: (Terrain) -> Void
     let collect: (Terrain) -> Void
 
@@ -12,6 +40,7 @@ struct SanctuaryMapView: View {
     @State private var selectedUndefinedLotID: Int?
     @State private var committedZoom: CGFloat = 1
     @State private var centerRequest = 0
+    @StateObject private var gestureGate = SanctuaryMapGestureGate()
 
     private var lotCount: Int {
         let lastOccupiedSlot = store.state.terrains.compactMap(\.mapSlot).max() ?? -1
@@ -35,7 +64,8 @@ struct SanctuaryMapView: View {
                 centerRequest: centerRequest,
                 minimumZoomScale: minimumZoom,
                 maximumZoomScale: maximumZoom,
-                canvasSize: canvasSize
+                canvasSize: canvasSize,
+                gestureGate: gestureGate
             ) {
                 ZStack(alignment: .topLeading) {
                     SanctuaryMapBackdrop()
@@ -43,11 +73,41 @@ struct SanctuaryMapView: View {
                     ForEach(lots) { lot in
                         lotView(for: lot)
                             .frame(
-                                width: SanctuaryMapLayout.lotSize.width,
-                                height: SanctuaryMapLayout.lotSize.height
+                                width: SanctuaryMapLayout.lotInteractionSize.width,
+                                height: SanctuaryMapLayout.lotInteractionSize.height
                             )
                             .position(lot.position)
-                            .zIndex(terrain(at: lot.id) == nil ? 0 : 2)
+                            .zIndex(terrain(at: lot.id) == nil ? 0 : lot.position.y)
+                    }
+
+                    ForEach(lots) { lot in
+                        if let terrain = terrain(at: lot.id), terrain.biome == .forest {
+                            ForestDecorationsLot(rotation: lot.rotation)
+                                .frame(
+                                    width: SanctuaryMapLayout.lotInteractionSize.width,
+                                    height: SanctuaryMapLayout.lotInteractionSize.height
+                                )
+                                .position(lot.position)
+                                .zIndex(10000 + lot.position.y)
+                        }
+                    }
+
+                    ForEach(lots) { lot in
+                        if let terrain = terrain(at: lot.id) {
+                            TerrainBadgeLot(
+                                terrain: terrain,
+                                rotation: lot.rotation,
+                                collect: { collect(terrain) },
+                                showBadges: showMapBadges,
+                                residentCount: store.residents(in: terrain.id).count
+                            )
+                            .frame(
+                                width: SanctuaryMapLayout.lotInteractionSize.width,
+                                height: SanctuaryMapLayout.lotInteractionSize.height
+                            )
+                            .position(lot.position)
+                            .zIndex(20000 + lot.position.y)
+                        }
                     }
                 }
                 .frame(width: canvasSize.width, height: canvasSize.height)
@@ -90,24 +150,20 @@ struct SanctuaryMapView: View {
             }
             .padding(12)
         }
-        .confirmationDialog(
-            "Definir tipo de terreno",
+        .sheet(
             isPresented: Binding(
                 get: { selectedUndefinedLotID != nil },
                 set: { if !$0 { selectedUndefinedLotID = nil } }
-            ),
-            titleVisibility: .visible
+            )
         ) {
-            ForEach(Biome.allCases) { biome in
-                Button(biome.mapTitle) {
+            BiomeSelectionSheet { biome in
+                if selectedUndefinedLotID != nil {
                     defineSelectedLot(as: biome)
                 }
             }
-            Button("Cancelar", role: .cancel) {
-                selectedUndefinedLotID = nil
-            }
-        } message: {
-            Text("Escolha o bioma. O novo terreno ficará disponível imediatamente.")
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(SanctuaryTheme.ink)
         }
     }
 
@@ -118,13 +174,21 @@ struct SanctuaryMapView: View {
                 store: store,
                 terrain: terrain,
                 rotation: lot.rotation,
-                open: { openTerrain(terrain) },
-                collect: { collect(terrain) }
+                open: {
+                    guard !gestureGate.suppressesLotActions else { return }
+                    SanctuaryHaptics.selection()
+                    openTerrain(terrain)
+                },
+                collect: {
+                    guard !gestureGate.suppressesLotActions else { return }
+                    collect(terrain)
+                }
             )
         } else {
             UndefinedTerrainLot(
                 rotation: lot.rotation,
                 chooseBiome: {
+                    guard !gestureGate.suppressesLotActions else { return }
                     selectedUndefinedLotID = lot.id
                     SanctuaryHaptics.selection()
                 }
@@ -149,7 +213,6 @@ struct SanctuaryMapView: View {
 
     private func defineSelectedLot(as biome: Biome) {
         guard let mapSlot = selectedUndefinedLotID else { return }
-        selectedUndefinedLotID = nil
         if case .success = store.defineTerrain(biome: biome, atMapSlot: mapSlot) {
             SanctuaryHaptics.success()
         }
@@ -222,6 +285,13 @@ struct SanctuaryMapLot: Identifiable {
 
 enum SanctuaryMapLayout {
     static let lotSize = CGSize(width: 224, height: 276)
+    /// A rotated asset can extend beyond `lotSize`. The view needs a square
+    /// large enough to contain every rotation so its organic hit shape is not
+    /// clipped back to the unrotated image bounds.
+    static let lotInteractionSize: CGSize = {
+        let side = ceil(hypot(lotSize.width, lotSize.height))
+        return CGSize(width: side, height: side)
+    }()
     private static let minimumCanvasSide: CGFloat = 1_360
     private static let canvasPadding: CGFloat = 40
 
@@ -387,6 +457,19 @@ private final class SanctuaryMapUIScrollView: UIScrollView {
     }
 }
 
+/// Observes a pinch even when it starts over a SwiftUI Button, but never
+/// prevents another recognizer. The native UIScrollView pinch remains solely
+/// responsible for scale, focal point and content offset.
+private final class SanctuaryMapPinchGestureRecognizer: UIPinchGestureRecognizer {
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+}
+
 private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
     @Binding var zoomScale: CGFloat
 
@@ -394,6 +477,7 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
     let minimumZoomScale: CGFloat
     let maximumZoomScale: CGFloat
     let canvasSize: CGSize
+    let gestureGate: SanctuaryMapGestureGate
     let content: Content
 
     init(
@@ -402,6 +486,7 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         minimumZoomScale: CGFloat,
         maximumZoomScale: CGFloat,
         canvasSize: CGSize,
+        gestureGate: SanctuaryMapGestureGate,
         @ViewBuilder content: () -> Content
     ) {
         _zoomScale = zoomScale
@@ -409,11 +494,12 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         self.minimumZoomScale = minimumZoomScale
         self.maximumZoomScale = maximumZoomScale
         self.canvasSize = canvasSize
+        self.gestureGate = gestureGate
         self.content = content()
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(zoomScale: $zoomScale)
+        Coordinator(zoomScale: $zoomScale, gestureGate: gestureGate)
     }
 
     func makeUIView(context: Context) -> SanctuaryMapUIScrollView {
@@ -426,13 +512,23 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         scrollView.canCancelContentTouches = true
         scrollView.delaysContentTouches = false
         scrollView.bounces = true
-        scrollView.bouncesZoom = true
+        scrollView.bouncesZoom = false
         scrollView.decelerationRate = .fast
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.backgroundColor = .clear
+        scrollView.pinchGestureRecognizer?.isEnabled = true
         scrollView.pinchGestureRecognizer?.cancelsTouchesInView = true
+
+        let mapPinchGestureRecognizer = SanctuaryMapPinchGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.observeMapPinch(_:))
+        )
+        mapPinchGestureRecognizer.delegate = context.coordinator
+        mapPinchGestureRecognizer.cancelsTouchesInView = true
+        mapPinchGestureRecognizer.delaysTouchesBegan = false
+        scrollView.addGestureRecognizer(mapPinchGestureRecognizer)
 
         let hostingController = UIHostingController(rootView: content)
         hostingController.view.backgroundColor = .clear
@@ -466,12 +562,15 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         context.coordinator.hostingController = hostingController
         context.coordinator.widthConstraint = widthConstraint
         context.coordinator.heightConstraint = heightConstraint
+        context.coordinator.scrollView = scrollView
+        context.coordinator.mapPinchGestureRecognizer = mapPinchGestureRecognizer
         return scrollView
     }
 
     func updateUIView(_ scrollView: SanctuaryMapUIScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.zoomScale = $zoomScale
+        coordinator.gestureGate = gestureGate
         coordinator.hostingController?.rootView = content
         coordinator.widthConstraint?.constant = canvasSize.width
         coordinator.heightConstraint?.constant = canvasSize.height
@@ -480,7 +579,12 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         scrollView.maximumZoomScale = maximumZoomScale
 
         let requestedZoom = min(maximumZoomScale, max(minimumZoomScale, zoomScale))
-        if !scrollView.isZooming,
+        coordinator.reconcilePinchCommit(
+            requestedZoom: requestedZoom,
+            in: scrollView
+        )
+        if !coordinator.isMapPinching,
+           !scrollView.isZooming,
            !scrollView.isZoomBouncing,
            abs(scrollView.zoomScale - requestedZoom) > 0.001 {
             coordinator.isApplyingSwiftUIUpdate = true
@@ -507,23 +611,95 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         _ scrollView: SanctuaryMapUIScrollView,
         coordinator: Coordinator
     ) {
+        if let mapPinchGestureRecognizer = coordinator.mapPinchGestureRecognizer {
+            scrollView.removeGestureRecognizer(mapPinchGestureRecognizer)
+        }
         scrollView.delegate = nil
     }
 
-    final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var zoomScale: Binding<CGFloat>
+        var gestureGate: SanctuaryMapGestureGate
         var hostingController: UIHostingController<Content>?
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
+        weak var scrollView: SanctuaryMapUIScrollView?
+        weak var mapPinchGestureRecognizer: SanctuaryMapPinchGestureRecognizer?
         var lastCenterRequest: Int?
         var isApplyingSwiftUIUpdate = false
 
-        init(zoomScale: Binding<CGFloat>) {
+        private var isPinchLifecycleActive = false
+        private var pinchSettlementWorkItem: DispatchWorkItem?
+
+        var isMapPinching: Bool {
+            isPinchLifecycleActive
+                || mapPinchGestureRecognizer?.state == .began
+                || mapPinchGestureRecognizer?.state == .changed
+        }
+
+        init(zoomScale: Binding<CGFloat>, gestureGate: SanctuaryMapGestureGate) {
             self.zoomScale = zoomScale
+            self.gestureGate = gestureGate
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             hostingController?.view
+        }
+
+        @objc func observeMapPinch(_ gestureRecognizer: UIPinchGestureRecognizer) {
+            switch gestureRecognizer.state {
+            case .began:
+                pinchSettlementWorkItem?.cancel()
+                isPinchLifecycleActive = true
+                gestureGate.beginPinch()
+
+            case .ended:
+                if let scrollView {
+                    commitCurrentZoom(from: scrollView)
+                }
+                gestureGate.finishPinch()
+                settlePinchAfterBindingUpdate()
+
+            case .cancelled:
+                if let scrollView {
+                    commitCurrentZoom(from: scrollView)
+                }
+                gestureGate.finishPinch()
+                settlePinchAfterBindingUpdate()
+
+            case .failed:
+                gestureGate.finishPinch()
+                isPinchLifecycleActive = false
+
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard let nativePinch = scrollView?.pinchGestureRecognizer else { return false }
+            return gestureRecognizer === nativePinch || otherGestureRecognizer === nativePinch
+        }
+
+        /// A Button changing from pressed to released can update SwiftUI after
+        /// the recognizer reaches `.ended`, but before the new zoom binding is
+        /// delivered back to this representable. Until both values match, an
+        /// update contains the stale pre-pinch scale and must not be applied.
+        func reconcilePinchCommit(
+            requestedZoom: CGFloat,
+            in scrollView: UIScrollView
+        ) {
+            guard isPinchLifecycleActive else { return }
+            let recognizerState = mapPinchGestureRecognizer?.state
+            guard recognizerState != .began, recognizerState != .changed else { return }
+            guard abs(scrollView.zoomScale - requestedZoom) <= 0.001 else { return }
+
+            pinchSettlementWorkItem?.cancel()
+            pinchSettlementWorkItem = nil
+            isPinchLifecycleActive = false
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -536,20 +712,25 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
             atScale scale: CGFloat
         ) {
             guard !isApplyingSwiftUIUpdate else { return }
-            if abs(zoomScale.wrappedValue - scale) > 0.001 {
-                zoomScale.wrappedValue = scale
-            }
+            commitCurrentZoom(from: scrollView)
         }
 
         func updateContentInsets(in scrollView: UIScrollView) {
             let horizontalInset = max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2)
             let verticalInset = max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2)
-            scrollView.contentInset = UIEdgeInsets(
+            let updatedInsets = UIEdgeInsets(
                 top: verticalInset,
                 left: horizontalInset,
                 bottom: verticalInset,
                 right: horizontalInset
             )
+            let currentInsets = scrollView.contentInset
+            guard abs(currentInsets.top - updatedInsets.top) > 0.001
+                    || abs(currentInsets.left - updatedInsets.left) > 0.001
+                    || abs(currentInsets.bottom - updatedInsets.bottom) > 0.001
+                    || abs(currentInsets.right - updatedInsets.right) > 0.001
+            else { return }
+            scrollView.contentInset = updatedInsets
         }
 
         func centerContent(in scrollView: UIScrollView, animated: Bool) {
@@ -558,6 +739,30 @@ private struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
                 y: (scrollView.contentSize.height - scrollView.bounds.height) / 2
             )
             scrollView.setContentOffset(offset, animated: animated)
+        }
+
+        private func settlePinchAfterBindingUpdate() {
+            pinchSettlementWorkItem?.cancel()
+
+            // Normally updateUIView reconciles and clears the lifecycle on the
+            // next render. The fallback also covers a pinch whose scale changed
+            // by less than the binding tolerance and caused no render at all.
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.isPinchLifecycleActive = false
+                self?.pinchSettlementWorkItem = nil
+            }
+            pinchSettlementWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+        }
+
+        private func commitCurrentZoom(from scrollView: UIScrollView) {
+            let scale = scrollView.zoomScale
+            guard abs(zoomScale.wrappedValue - scale) > 0.001 else { return }
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                zoomScale.wrappedValue = scale
+            }
         }
     }
 }
@@ -572,43 +777,185 @@ private struct SanctuaryTerrainLot: View {
     private var residents: [AnimalInstance] { store.residents(in: terrain.id) }
     private var species: SpeciesDefinition? { store.residentSpecies(in: terrain.id) }
     private var collectableAmount: Int { Int(floor(terrain.storedResources)) }
+    
+    private func animalSlots(for rotation: Angle) -> [AnimalSlot] {
+        let degrees = Int(round(rotation.degrees))
+        
+        switch degrees {
+        case 120:
+            return [
+                AnimalSlot(position: CGPoint(x: -40, y: 40), isFacingLeft: true),
+                AnimalSlot(position: CGPoint(x: 45, y: -40), isFacingLeft: true),
+                AnimalSlot(position: CGPoint(x: -70, y: -10), isFacingLeft: false),
+                AnimalSlot(position: CGPoint(x: 20, y: 05), isFacingLeft: false),
+                
+                
+            ]
+        case -121, -120:
+            return [
+                AnimalSlot(position: CGPoint(x: 0, y: -25), isFacingLeft: false),
+                AnimalSlot(position: CGPoint(x: 10, y: 30), isFacingLeft: true),
+                AnimalSlot(position: CGPoint(x: 50, y: -55), isFacingLeft: true),
+                AnimalSlot(position: CGPoint(x: -20, y: 70), isFacingLeft: false),
+            ]
+        default:
+            return [
+                AnimalSlot(position: CGPoint(x: -50, y: -35), isFacingLeft: false),
+                AnimalSlot(position: CGPoint(x: -30, y: 0), isFacingLeft: false),
+                AnimalSlot(position: CGPoint(x: 35, y: 25), isFacingLeft: true),
+                AnimalSlot(position: CGPoint(x: 25, y: 65), isFacingLeft: true),
+            ]
+        }
+    }
 
     var body: some View {
         ZStack {
-            Button(action: open) {
-                ZStack {
-                    Image(terrain.biome.mapAssetName)
-                        .resizable()
-                        .scaledToFit()
-                        .rotationEffect(rotation)
-                        .shadow(color: terrain.biome.mapColor.opacity(0.3), radius: 16, y: 9)
+            ZStack {
+                Image(terrain.biome.mapAssetName)
+                    .resizable()
+                    .scaledToFit()
+                    .rotationEffect(rotation)
+                    .shadow(color: terrain.biome.mapColor.opacity(0.3), radius: 16, y: 9)
+                    
 
-                    if terrain.isUnlocked, let species = species {
-                        ForEach(residents) { resident in
-                            WanderingAnimalView(animal: species.spriteName)
-                        }
+
+                if terrain.isUnlocked, let species = species {
+                    let slots = animalSlots(for: rotation)
+                    ForEach(Array(residents.prefix(4).enumerated()), id: \.element.id) { index, resident in
+                        let slot = slots[index % slots.count]
+                        WanderingAnimalView(
+                            animal: species.spriteName,
+                            center: slot.position,
+                            isFacingLeft: slot.isFacingLeft
+                        )
                     }
                 }
             }
-            .buttonStyle(MapLotButtonStyle())
-
-            if terrain.isUnlocked, collectableAmount > 0 {
-                Button(action: collect) {
-                    Label(collectableAmount.formatted(), systemImage: "sparkles")
-                        .font(.caption.bold())
-                        .foregroundStyle(SanctuaryTheme.ink)
-                        .padding(.horizontal, 9)
-                        .frame(minHeight: 36)
-                        .background(SanctuaryTheme.lime, in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.5)))
-                        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-                }
-                .buttonStyle(.plain)
-                .offset(x: 70, y: -76)
-                .accessibilityLabel("Coletar (collectableAmount) recursos do terreno (terrain.biome.title)")
+            .frame(
+                width: SanctuaryMapLayout.lotSize.width,
+                height: SanctuaryMapLayout.lotSize.height
+            )
+            .frame(
+                width: SanctuaryMapLayout.lotInteractionSize.width,
+                height: SanctuaryMapLayout.lotInteractionSize.height
+            )
+            .contentShape(TerrainInteractionShape(rotation: rotation))
+            .onTapGesture(perform: open)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                open()
             }
+
+
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ForestDecorationsLot: View {
+    let rotation: Angle
+    
+    private func rotatedPoint(x: CGFloat, y: CGFloat) -> CGPoint {
+        let radians = CGFloat(rotation.radians)
+        let cosine = cos(radians)
+        let sine = sin(radians)
+        
+        return CGPoint(
+            x: x * cosine - y * sine,
+            y: x * sine + y * cosine
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            let topOak = rotatedPoint(x: -35, y: -70)
+            let rightPine = rotatedPoint(x: 75, y: 20)
+            let bottomOak = rotatedPoint(x: 25, y: 110)
+            
+            Image("oak-tree")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 55, height: 55)
+                .shadow(color: .black.opacity(0.4), radius: 5, x: 4, y: -5)
+                .offset(x: topOak.x, y: topOak.y - 20)
+                
+            Image("pine-tree")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 55, height: 55)
+                .shadow(color: .black.opacity(0.35), radius: 4, x: 0, y: 2)
+                .offset(x: rightPine.x, y: rightPine.y - 15)
+                
+            Image("oak-tree")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 45, height: 45)
+                .shadow(color: .black.opacity(0.35), radius: 4, x: 0, y: 2)
+                .offset(x: bottomOak.x, y: bottomOak.y - 15)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct TerrainBadgeLot: View {
+    let terrain: Terrain
+    let rotation: Angle
+    let collect: () -> Void
+    let showBadges: Bool
+    let residentCount: Int
+
+    private var collectableAmount: Int { Int(floor(terrain.storedResources)) }
+
+    private func rotatedPoint(x: CGFloat, y: CGFloat) -> CGPoint {
+        let radians = CGFloat(rotation.radians)
+        let cosine = cos(radians)
+        let sine = sin(radians)
+        return CGPoint(x: x * cosine - y * sine, y: x * sine + y * cosine)
+    }
+
+    private var badgeOffset: CGSize {
+        let pt = rotatedPoint(x: 0, y: -75)
+        return CGSize(width: pt.x, height: pt.y)
+    }
+
+    var body: some View {
+        ZStack {
+            if showBadges && terrain.isUnlocked {
+                HStack(spacing: 4) {
+                    if collectableAmount > 0 {
+                        Label(collectableAmount.formatted(), systemImage: "sparkles")
+                            .font(.caption.bold())
+                            .foregroundStyle(SanctuaryTheme.ink)
+                            .padding(.horizontal, 9)
+                            .frame(minHeight: 36)
+                            .background(SanctuaryTheme.lime, in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.5)))
+                            .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                            .contentShape(Capsule())
+                            .onTapGesture(perform: collect)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction {
+                                collect()
+                            }
+                            .accessibilityLabel("Coletar \(collectableAmount) recursos do terreno \(terrain.biome.title)")
+                    }
+                    
+                    if residentCount > 4 {
+                        Label("\(residentCount)", systemImage: "pawprint.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 9)
+                            .frame(minHeight: 36)
+                            .background(SanctuaryTheme.ink.opacity(0.8), in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.3)))
+                            .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                            .accessibilityLabel("\(residentCount) animais no terreno \(terrain.biome.title)")
+                    }
+                }
+                .offset(badgeOffset)
+            }
+        }
     }
 }
 
@@ -617,32 +964,111 @@ private struct UndefinedTerrainLot: View {
     let chooseBiome: () -> Void
 
     var body: some View {
-        Button(action: chooseBiome) {
-            ZStack {
-                Image("TerrainUndefined")
-                    .resizable()
-                    .scaledToFit()
-                    .rotationEffect(rotation)
-                    .opacity(0.88)
-                    .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
+        ZStack {
+            Image("TerrainUndefined")
+                .resizable()
+                .scaledToFit()
+                .rotationEffect(rotation)
+                .opacity(0.88)
+                .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
 
-                VStack(spacing: 4) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.caption.bold())
-                    Text("ESCOLHER BIOMA")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .tracking(0.5)
-                }
-                .foregroundStyle(SanctuaryTheme.ink.opacity(0.78))
-                .padding(8)
-                .background(.white.opacity(0.86), in: Capsule())
-                .overlay(Capsule().stroke(SanctuaryTheme.ink.opacity(0.14)))
+            VStack(spacing: 4) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.caption.bold())
+                Text("ESCOLHER BIOMA")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .tracking(0.5)
             }
+            .foregroundStyle(SanctuaryTheme.ink.opacity(0.78))
+            .padding(8)
+            .background(.white.opacity(0.86), in: Capsule())
+            .overlay(Capsule().stroke(SanctuaryTheme.ink.opacity(0.14)))
         }
-        .buttonStyle(MapLotButtonStyle())
+        .frame(
+            width: SanctuaryMapLayout.lotSize.width,
+            height: SanctuaryMapLayout.lotSize.height
+        )
+        .frame(
+            width: SanctuaryMapLayout.lotInteractionSize.width,
+            height: SanctuaryMapLayout.lotInteractionSize.height
+        )
+        .contentShape(TerrainInteractionShape(rotation: rotation))
+        .onTapGesture(perform: chooseBiome)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Terreno sem tipo")
         .accessibilityHint("Toque para escolher o bioma deste terreno")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            chooseBiome()
+        }
+    }
+}
+
+/// A compact approximation of the opaque part shared by all terrain PNGs.
+/// Keeping the path slightly inside the feathered edge avoids ambiguous taps
+/// in the transparent corners while preserving a generous target in the lot.
+private struct TerrainInteractionShape: Shape {
+    let rotation: Angle
+
+    private static let normalizedOutline = [
+        CGPoint(x: 0.34, y: 0.09),
+        CGPoint(x: 0.40, y: 0.08),
+        CGPoint(x: 0.45, y: 0.15),
+        CGPoint(x: 0.48, y: 0.31),
+        CGPoint(x: 0.53, y: 0.36),
+        CGPoint(x: 0.77, y: 0.40),
+        CGPoint(x: 0.89, y: 0.46),
+        CGPoint(x: 0.95, y: 0.56),
+        CGPoint(x: 0.92, y: 0.66),
+        CGPoint(x: 0.80, y: 0.75),
+        CGPoint(x: 0.71, y: 0.84),
+        CGPoint(x: 0.70, y: 0.95),
+        CGPoint(x: 0.63, y: 0.98),
+        CGPoint(x: 0.53, y: 0.95),
+        CGPoint(x: 0.47, y: 0.87),
+        CGPoint(x: 0.44, y: 0.73),
+        CGPoint(x: 0.36, y: 0.67),
+        CGPoint(x: 0.13, y: 0.59),
+        CGPoint(x: 0.07, y: 0.53),
+        CGPoint(x: 0.07, y: 0.43),
+        CGPoint(x: 0.12, y: 0.34),
+        CGPoint(x: 0.23, y: 0.24),
+        CGPoint(x: 0.29, y: 0.13)
+    ]
+
+    func path(in rect: CGRect) -> Path {
+        let imageRect = CGRect(
+            x: rect.midX - SanctuaryMapLayout.lotSize.width / 2,
+            y: rect.midY - SanctuaryMapLayout.lotSize.height / 2,
+            width: SanctuaryMapLayout.lotSize.width,
+            height: SanctuaryMapLayout.lotSize.height
+        )
+        let center = CGPoint(x: imageRect.midX, y: imageRect.midY)
+        let radians = CGFloat(rotation.radians)
+        let cosine = cos(radians)
+        let sine = sin(radians)
+
+        func point(for normalizedPoint: CGPoint) -> CGPoint {
+            let point = CGPoint(
+                x: imageRect.minX + normalizedPoint.x * imageRect.width,
+                y: imageRect.minY + normalizedPoint.y * imageRect.height
+            )
+            let deltaX = point.x - center.x
+            let deltaY = point.y - center.y
+            return CGPoint(
+                x: center.x + deltaX * cosine - deltaY * sine,
+                y: center.y + deltaX * sine + deltaY * cosine
+            )
+        }
+
+        var path = Path()
+        guard let firstPoint = Self.normalizedOutline.first else { return path }
+        path.move(to: point(for: firstPoint))
+        for outlinePoint in Self.normalizedOutline.dropFirst() {
+            path.addLine(to: point(for: outlinePoint))
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -665,15 +1091,6 @@ private struct MapLegendItem: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(SanctuaryTheme.cream)
         }
-    }
-}
-
-private struct MapLotButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .brightness(configuration.isPressed ? -0.08 : 0)
-            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
     }
 }
 
@@ -744,12 +1161,6 @@ private extension Biome {
         }
     }
 
-    var mapTitle: String {
-        switch self {
-        case .grassland: "Planície"
-        default: title
-        }
-    }
 }
 
 #Preview("Mapa do santuário") {
@@ -797,12 +1208,15 @@ private extension SpeciesDefinition {
     }
 }
 
+private struct AnimalSlot {
+    let position: CGPoint
+    let isFacingLeft: Bool
+}
+
 private struct WanderingAnimalView: View {
     let animal: String
-
-    let centerX = CGFloat.random(in: -30...30)
-    let centerY = CGFloat.random(in: -20...20)
-    let isFacingLeft = Bool.random()
+    let center: CGPoint
+    let isFacingLeft: Bool
 
     var body: some View {
         TimelineView(.animation) { context in
@@ -811,7 +1225,7 @@ private struct WanderingAnimalView: View {
             AnimalSpriteView(animal: animal, t: t)
                 .frame(width: 48, height: 48)
                 .scaleEffect(x: isFacingLeft ? -1 : 1, y: 1)
-                .offset(x: centerX, y: centerY - 10)
+                .offset(x: center.x, y: center.y - 10)
         }
     }
 }
