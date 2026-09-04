@@ -499,10 +499,14 @@ extension WeatherEngine {
 
 - **Vento:** módulo = `windSpeedKmh × balance.windDriftPerKmh`. Direção = para onde o vento
   sopra, ou seja `windFromDegrees + 180°`. Bússola sobre a arena: 0° = topo da tela.
-- **Chuva:** módulo = `rainIntensity × balance.rainSkidMax`, na direção do vetor de arremesso
-  normalizado. Sem chuva, zero.
-- **Perspectiva:** a componente vertical dos dois desvios é multiplicada por `squash` — o mesmo
-  `targetSquash` que desenha e julga o alvo. Uma conta só, como já vale para a distância.
+- **Chuva:** módulo = `rainIntensity × balance.rainSkidMax`, na direção do vetor de arremesso.
+  Sem chuva, zero.
+- **Perspectiva:** os dois desvios são calculados no **espaço do chão** e achatados só no fim —
+  a componente vertical do resultado é multiplicada por `squash`, o mesmo `targetSquash` que
+  desenha e julga o alvo. Uma conta só, como já vale para a distância.
+  Consequência para a chuva: o vetor de arremesso chega em coordenadas de tela, então
+  desachate (`dy / squash`) **antes** de normalizar. Normalizar na tela e achatar depois aplica
+  o achatamento duas vezes, e a cesta escorrega fora da linha em que voou.
 - Sol e nublado não entram na conta. `SkyCondition` não tem multiplicador.
 
 **Na view:**

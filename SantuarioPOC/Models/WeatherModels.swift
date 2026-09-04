@@ -1,3 +1,4 @@
+import CoreGraphics
 import CoreLocation
 import Foundation
 import WeatherKit
@@ -127,5 +128,50 @@ final class WeatherProvider: ObservableObject {
             defer { group.cancelAll() }
             return try await group.next()!
         }
+    }
+}
+
+enum WeatherEngine {
+    /// Pouso mirado → pouso real. Vento empurra; chuva escorrega na direção do voo.
+    /// Chamar com `conditions.rainIntensity` zerado dá o pouso intermediário (só vento),
+    /// usado pela view para animar o voo antes do escorregão da chuva.
+    static func landing(
+        aimed: CGPoint,
+        throwVector: CGVector,
+        conditions: WeatherConditions,
+        balance: RescueBalance,
+        squash: Double
+    ) -> CGPoint {
+        let wind = windOffset(conditions: conditions, balance: balance, squash: squash)
+        let rain = rainOffset(throwVector: throwVector, conditions: conditions, balance: balance, squash: squash)
+        return CGPoint(x: aimed.x + wind.dx + rain.dx, y: aimed.y + wind.dy + rain.dy)
+    }
+
+    // ponytail: bússola achatada em cima da arena, 0° = topo. Se a perspectiva de T011
+    // mudar o eixo do chão, este é o único lugar a mexer.
+    private static func windOffset(conditions: WeatherConditions, balance: RescueBalance, squash: Double) -> CGVector {
+        guard conditions.windSpeedKmh > 0 else { return .zero }
+
+        // windFromDegrees é de onde o vento vem; o empurrão vai para o lado oposto.
+        let pushDegrees = (conditions.windFromDegrees + 180).truncatingRemainder(dividingBy: 360)
+        let radians = pushDegrees * .pi / 180
+        let magnitude = conditions.windSpeedKmh * balance.windDriftPerKmh
+
+        // 0° = topo da tela, sentido horário: dx = sin, dy = -cos (eixo Y cresce para baixo).
+        return CGVector(dx: sin(radians) * magnitude, dy: -cos(radians) * magnitude * squash)
+    }
+
+    private static func rainOffset(throwVector: CGVector, conditions: WeatherConditions, balance: RescueBalance, squash: Double) -> CGVector {
+        guard conditions.rainIntensity > 0 else { return .zero }
+
+        // Desfaz o achatamento da tela para obter a direção no chão — o mesmo espaço em que
+        // `RescueView.resolveThrow` já compara distâncias (`dy / targetSquash`) — normaliza
+        // ali, e só reaplica o achatamento no fim, no y do resultado.
+        let ground = CGVector(dx: throwVector.dx, dy: throwVector.dy / squash)
+        let length = hypot(ground.dx, ground.dy)
+        guard length > 0 else { return .zero }
+
+        let magnitude = conditions.rainIntensity * balance.rainSkidMax
+        return CGVector(dx: ground.dx / length * magnitude, dy: ground.dy / length * magnitude * squash)
     }
 }

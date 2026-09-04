@@ -170,6 +170,9 @@ struct RescueBalance: Equatable {
     var steadyHandLevel: Int
     var throwSensitivity: Double
     var throwDuration: Double
+    var windDriftPerKmh: Double
+    var rainSkidMax: Double
+    var rainSkidDuration: Double
 
     static let poc = RescueBalance(
         baseChance: [.s: 0.05, .a: 0.10, .b: 0.18, .c: 0.30, .d: 0.45],
@@ -186,7 +189,10 @@ struct RescueBalance: Equatable {
         coreRadiusRatio: 0.40,
         steadyHandLevel: 1,
         throwSensitivity: 2.6,
-        throwDuration: 0.42
+        throwDuration: 0.42,
+        windDriftPerKmh: 1.2,
+        rainSkidMax: 26,
+        rainSkidDuration: 0.22
     )
 
     var hitRadius: Double { hitRadiusBase * (1 + Double(steadyHandLevel - 1) * hitRadiusPerLevel) }

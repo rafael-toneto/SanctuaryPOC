@@ -306,22 +306,45 @@ struct RescueView: View {
                 guard canThrow else { return }
                 stretchHaptics.release()
                 let translation = value.translation
-                let landing = CGPoint(
+                let aimedLanding = CGPoint(
                     x: basketCenter.x - translation.width * balance.throwSensitivity,
                     y: basketCenter.y - translation.height * balance.throwSensitivity
                 )
+                let throwVector = CGVector(
+                    dx: -translation.width * balance.throwSensitivity,
+                    dy: -translation.height * balance.throwSensitivity
+                )
+                let conditions = weather.conditions
+                var windOnlyConditions = conditions
+                windOnlyConditions.rainIntensity = 0
+
+                let windLanding = WeatherEngine.landing(
+                    aimed: aimedLanding, throwVector: throwVector,
+                    conditions: windOnlyConditions, balance: balance, squash: targetSquash
+                )
+                let finalLanding = WeatherEngine.landing(
+                    aimed: aimedLanding, throwVector: throwVector,
+                    conditions: conditions, balance: balance, squash: targetSquash
+                )
                 let tier = encounter.selectedTier
                 let species = encounter.species
+                let hasRainSkid = conditions.rainIntensity > 0
 
                 isThrowInFlight = true
                 withAnimation(.easeOut(duration: balance.throwDuration)) {
-                    dragTranslation = CGSize(
-                        width: -translation.width * balance.throwSensitivity,
-                        height: -translation.height * balance.throwSensitivity
-                    )
+                    dragTranslation = CGSize(width: windLanding.x - basketCenter.x, height: windLanding.y - basketCenter.y)
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + balance.throwDuration) {
-                    resolveThrow(species: species, tier: tier, landing: landing)
+                    guard hasRainSkid else {
+                        resolveThrow(species: species, tier: tier, landing: finalLanding)
+                        return
+                    }
+                    withAnimation(.easeOut(duration: balance.rainSkidDuration)) {
+                        dragTranslation = CGSize(width: finalLanding.x - basketCenter.x, height: finalLanding.y - basketCenter.y)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + balance.rainSkidDuration) {
+                        resolveThrow(species: species, tier: tier, landing: finalLanding)
+                    }
                 }
             }
     }
@@ -558,6 +581,8 @@ struct RescueLabSheet: View {
 
                 Section("Calibração de toque") {
                     sliderRow("Sensibilidade do arremesso", value: $balance.throwSensitivity, range: 1.0...5.0, format: "%.1f×")
+                    sliderRow("Desvio do vento", value: $balance.windDriftPerKmh, range: 0...4, format: "%.2f pt/km/h")
+                    sliderRow("Escorregão da chuva", value: $balance.rainSkidMax, range: 0...80, format: "%.0f pt")
                     sliderRow("Raio base do alvo", value: $balance.hitRadiusBase, range: 40...160, format: "%.0f pt")
                 }
 
