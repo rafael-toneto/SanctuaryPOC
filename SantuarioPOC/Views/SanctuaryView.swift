@@ -20,6 +20,7 @@ struct SanctuaryView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var activeSheet: SanctuarySheet?
+    @State private var showsRescue = false
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -67,6 +68,9 @@ struct SanctuaryView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+        }
+        .fullScreenCover(isPresented: $showsRescue) {
+            RescueView()
         }
         .onAppear { store.resume() }
         .onReceive(timer) { store.tick(at: $0) }
@@ -183,11 +187,13 @@ struct SanctuaryView: View {
                 VStack(spacing: 8) {
                     storageButton
                     labButton
+                    rescueButton
                 }
             } else {
                 HStack(spacing: 12) {
                     storageButton
                     labButton
+                    rescueButton
                 }
             }
         }
@@ -224,6 +230,16 @@ struct SanctuaryView: View {
             activeSheet = .lab
         } label: {
             Label("Demo", systemImage: "flask.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SoftActionButtonStyle())
+    }
+
+    private var rescueButton: some View {
+        Button {
+            showsRescue = true
+        } label: {
+            Label("Resgate", systemImage: "figure.walk")
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(SoftActionButtonStyle())
