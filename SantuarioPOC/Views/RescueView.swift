@@ -59,6 +59,16 @@ struct RescueView: View {
             .padding(.bottom, 18)
         }
         .coordinateSpace(name: "rescueArena")
+        .overlay {
+            if let windGhostLanding {
+                Ellipse()
+                    .stroke(SanctuaryTheme.lime.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    .frame(width: balance.hitRadius * 2, height: balance.hitRadius * 2 * targetSquash)
+                    .position(windGhostLanding)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
         .task { await weather.refresh() }
         .overlay(alignment: .bottom) {
             if let message, !encounterEnded {
@@ -135,6 +145,7 @@ struct RescueView: View {
                 VStack(spacing: 10) {
                     HStack {
                         closeButton
+                        weatherStrip
                         labButton
                         Spacer()
                         rarityBadge
@@ -144,12 +155,71 @@ struct RescueView: View {
             } else {
                 HStack(spacing: 12) {
                     closeButton
+                    weatherStrip
                     labButton
                     speciesName
                     rarityBadge
                 }
             }
         }
+    }
+
+    // MARK: - Clima
+
+    // Cortes de velocidade só para a cor da seta — apresentação, não regra (Artigo 5).
+    private let calmWindThreshold: Double = 1
+    private let strongWindThreshold: Double = 30
+
+    private var windColor: Color {
+        let speed = weather.conditions.windSpeedKmh
+        if speed < calmWindThreshold { return .secondary }
+        if speed >= strongWindThreshold { return SanctuaryTheme.warning }
+        return SanctuaryTheme.lime
+    }
+
+    private var windDirectionPhrase: String {
+        let degrees = WeatherEngine.windPushDegrees(weather.conditions)
+        let sector = Int((degrees / 45).rounded()) % 8
+        return switch sector {
+        case 0: "para cima"
+        case 1: "para cima e para a direita"
+        case 2: "para a direita"
+        case 3: "para baixo e para a direita"
+        case 4: "para baixo"
+        case 5: "para baixo e para a esquerda"
+        case 6: "para a esquerda"
+        default: "para cima e para a esquerda"
+        }
+    }
+
+    private var weatherAccessibilityLabel: String {
+        let speed = Int(weather.conditions.windSpeedKmh.rounded())
+        let windPart = speed < 1
+            ? "Vento parado."
+            : "Vento de \(speed) quilômetros por hora, soprando \(windDirectionPhrase)."
+        return "\(windPart) \(weather.conditions.sky.title)."
+    }
+
+    private var weatherStrip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.up")
+                .font(.subheadline.bold())
+                .foregroundStyle(windColor)
+                .rotationEffect(.degrees(WeatherEngine.windPushDegrees(weather.conditions)))
+            Text("\(Int(weather.conditions.windSpeedKmh.rounded())) km/h")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(SanctuaryTheme.cream)
+            Image(systemName: weather.conditions.sky.symbol)
+                .font(.caption)
+                .foregroundStyle(SanctuaryTheme.cream)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.08), in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.1)))
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(weatherAccessibilityLabel)
     }
 
     private var closeButton: some View {
@@ -206,6 +276,17 @@ struct RescueView: View {
     }
 
     // MARK: - Animal e alvo
+
+    /// Onde cairia um arremesso mirado no centro do alvo, com o clima atual — a prévia do
+    /// desvio. `throwVector: .zero` zera o termo da chuva (guarda em `WeatherEngine.landing`),
+    /// então isto mostra só o vento, que é o que a faixa de clima promete.
+    private var windGhostLanding: CGPoint? {
+        guard weather.conditions.windSpeedKmh > 0 else { return nil }
+        return WeatherEngine.landing(
+            aimed: targetCenter, throwVector: .zero,
+            conditions: weather.conditions, balance: balance, squash: targetSquash
+        )
+    }
 
     private var animalAndTarget: some View {
         VStack(spacing: -14) {

@@ -149,11 +149,19 @@ enum WeatherEngine {
 
     // ponytail: bússola achatada em cima da arena, 0° = topo. Se a perspectiva de T011
     // mudar o eixo do chão, este é o único lugar a mexer.
+    /// Direção para onde o vento empurra (não de onde ele vem), na mesma convenção usada
+    /// para desenhar e julgar o arremesso: 0° no topo da tela, sentido horário — a mesma
+    /// que `.rotationEffect(.degrees(_:))` usa. A seta do mostrador (T009) consome esta
+    /// função para nunca discordar do desvio real.
+    static func windPushDegrees(_ conditions: WeatherConditions) -> Double {
+        // windFromDegrees é de onde o vento vem; o empurrão vai para o lado oposto.
+        (conditions.windFromDegrees + 180).truncatingRemainder(dividingBy: 360)
+    }
+
     private static func windOffset(conditions: WeatherConditions, balance: RescueBalance, squash: Double) -> CGVector {
         guard conditions.windSpeedKmh > 0 else { return .zero }
 
-        // windFromDegrees é de onde o vento vem; o empurrão vai para o lado oposto.
-        let pushDegrees = (conditions.windFromDegrees + 180).truncatingRemainder(dividingBy: 360)
+        let pushDegrees = windPushDegrees(conditions)
         let radians = pushDegrees * .pi / 180
         let magnitude = conditions.windSpeedKmh * balance.windDriftPerKmh
 
