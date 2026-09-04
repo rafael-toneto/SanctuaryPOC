@@ -274,3 +274,27 @@ enum SanctuaryHaptics {
         UISelectionFeedbackGenerator().selectionChanged()
     }
 }
+
+/// Cliques enquanto a corda do estilingue estica: mais densos e mais fortes conforme a puxada
+/// cresce, como a tensão subindo. `release()` fecha com o baque do disparo.
+// ponytail: ticks discretos em vez de um player contínuo do Core Haptics; trocar se soar catraca.
+final class StretchHaptics {
+    private let generator = UIImpactFeedbackGenerator(style: .heavy)
+    private var lastStep = -1
+
+    /// `progress`: 0 na posição de repouso, 1 na puxada máxima.
+    func update(progress: Double) {
+        let p = min(max(progress, 0), 1)
+        let step = Int(p * p * 16)  // quadrático: cliques ficam mais juntos perto do limite
+        guard step != lastStep else { return }
+        lastStep = step
+        generator.impactOccurred(intensity: 0.45 + p * 0.55)
+        generator.prepare()
+    }
+
+    func release() {
+        guard lastStep >= 0 else { return }
+        lastStep = -1
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred(intensity: 1)
+    }
+}

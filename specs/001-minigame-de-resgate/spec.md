@@ -273,3 +273,159 @@ balanceamento aprovado. Devem ficar num único ponto de ajuste e serem editávei
 - **Upgrades do jogador e XP** — spec futura; a fórmula já tem o ponto de entrada.
 - **Arte final, animação de fuga e som** — a POC valida a mecânica, não o acabamento.
 - **Matriz espécie × bioma** — só importa quando o animal for acolhido.
+
+---
+
+# Extensão 2 — clima, hub de cestas e perspectiva
+
+> Adição à spec aprovada. O minigame de resgate já entregue continua valendo inteiro; o que
+> segue é o que muda.
+
+## Contexto
+
+O arremesso hoje é determinístico: mesma puxada, mesmo pouso, sempre. Isso torna o encontro
+previsível depois de dez tentativas. O clima do lugar onde o jogador está de fato caminhando
+entra como a variável que renova a mira a cada sessão — e amarra o jogo ao mundo real, que é o
+que o resto da experiência já faz com a geolocalização.
+
+Junto vão duas dívidas de interface: o rodapé de cestas em duas fileiras não escala para as
+nove cestas, e a tela não tem perspectiva — o alvo é uma elipse que não parece chão.
+
+## Escopo desta extensão
+
+**Entra:**
+- Uma condição de clima real, do lugar onde o jogador está, visível na tela de encontro.
+- Vento que desvia o ponto de pouso da cesta, proporcional à sua velocidade e direção.
+- Chuva que faz a cesta escorregar ao tocar o chão molhado, na direção em que voava.
+- Mostrador de vento que permite ao jogador compensar a mira.
+- Um hub único de cestas, aberto por um botão, no lugar das duas fileiras do rodapé.
+- Perspectiva e acabamento visual do encontro.
+
+**Não entra:**
+- Clima afetando a chance de resgate, a chance de fuga ou o tamanho da área de acerto.
+- Previsão do tempo, ciclo dia/noite, estações, ou clima histórico.
+- Clima no santuário. Esta extensão vive só no encontro.
+- Evento climático raro, tempestade especial, ou espécie que só aparece com certo clima.
+- Comprar cestas pelo hub — o hub escolhe, não compra.
+
+## Regras confirmadas usadas
+
+Nenhuma. **Clima não existe no canon do jogo** (`sistemas-do-jogo.md` não o menciona). Esta
+extensão é uma **proposta** do dono do repo, validada como POC antes de virar regra.
+
+## Modelo de clima
+
+Três condições, e só uma delas tem regra:
+
+| Condição | Efeito no arremesso |
+| --- | --- |
+| **Sol** | Nenhum. É a condição ideal — o comportamento atual do jogo. |
+| **Nublado** | Nenhum. Muda só a atmosfera. |
+| **Chuva** | A cesta escorrega ao tocar o chão, na direção em que voava, proporcional à intensidade da chuva. |
+| **Vento** | Empurra a cesta durante o voo, proporcional à velocidade, na direção para onde sopra. O vento é independente das outras três: pode ventar com sol. |
+
+O desvio é **determinístico**: o mesmo arremesso, com o mesmo clima, cai sempre no mesmo ponto.
+O clima é uma condição a ler e compensar, não um sorteio. Errar por vento é erro do jogador, e
+custa a cesta e o sorteio de fuga como qualquer outro erro.
+
+O jogador **vê o vento antes de puxar**: direção e velocidade. Sem o mostrador, o desvio seria
+punição arbitrária; com ele, é a habilidade principal do minigame.
+
+### Valores provisórios
+
+| Parâmetro | Valor provisório | Rótulo |
+| --- | --- | --- |
+| Desvio do vento | 1,2 pt de desvio por km/h de vento | `valor provisório` |
+| Escorregão da chuva | até 26 pt com chuva no talo | `valor provisório` |
+| Duração do escorregão | 0,22 s | `valor provisório` |
+| Chuva "no talo" | 7,5 mm/h de precipitação | `valor provisório` |
+| Faixa útil de vento | 0 a 60 km/h | `valor provisório` |
+
+Referência de tato: a área de acerto tem 82 pt de raio. Vento de 20 km/h desvia ~24 pt —
+sentido, mas compensável. É esse o alvo, e ele só se confirma com o aparelho na mão.
+
+## Decisões em aberto que esta extensão abre
+
+```
+[NEEDS CLARIFICATION: clima não existe no canon — esta extensão é proposta, não regra.
+Se for adotada, `sistemas-do-jogo.md` precisa ganhar a seção correspondente]
+
+[NEEDS CLARIFICATION: quanto o vento deve desviar — usando placeholder
+desvio = velocidade_kmh × 1,2 pt, direção = para onde o vento sopra]
+
+[NEEDS CLARIFICATION: quanto a chuva deve fazer escorregar — usando placeholder
+escorregão = intensidade × 26 pt na direção do voo]
+
+[NEEDS CLARIFICATION: se o clima deve ter teto de dificuldade — vento de 60 km/h com a área
+de acerto atual pode tornar o resgate praticamente impossível. Nenhum teto foi aplicado]
+
+[NEEDS CLARIFICATION: o que acontece com quem joga sem permissão de localização ou sem rede —
+a POC cai em "sol, sem vento", o que é a condição mais fácil. Se o clima entrar no jogo final,
+isso é um incentivo a negar a permissão]
+
+[NEEDS CLARIFICATION: se upgrades do jogador devem reduzir o efeito do clima — nenhuma trilha
+de upgrade atual fala em clima]
+```
+
+## Comportamento esperado
+
+### Cenário: dia de sol
+- **Dado** que o clima do lugar do jogador é sol sem vento
+- **Quando** o jogador arremessa
+- **Então** a cesta cai exatamente onde caía antes desta extensão, e o mostrador de vento
+  aparece neutro
+
+### Cenário: vento forte
+- **Dado** que venta 40 km/h de oeste para leste
+- **Quando** o jogador mira no centro do alvo e solta
+- **Então** a cesta é empurrada para leste e cai fora do alvo, a cesta é consumida e a fuga é
+  sorteada como em qualquer erro
+- **E quando** o jogador mira compensando, na direção contrária ao empurrão
+- **Então** ele acerta
+
+### Cenário: chuva
+- **Dado** que está chovendo forte
+- **Quando** a cesta toca o chão dentro do alvo, perto da borda de fora
+- **Então** ela escorrega mais um trecho na direção em que voava, podendo sair do alvo — e é a
+  posição depois do escorregão que decide o resultado
+
+### Cenário: sem clima disponível
+- **Dado** que o jogador negou a permissão de localização, ou está sem rede
+- **Quando** abre o encontro
+- **Então** o jogo se comporta como num dia de sol sem vento, sem alerta, sem tela de erro e
+  sem pedir a permissão de novo
+
+### Cenário: escolher uma cesta
+- **Dado** que o jogador está num encontro
+- **Quando** toca no botão de cestas do rodapé
+- **Então** sobe um painel com as nove cestas agrupadas por dieta, cada uma com nome e estoque
+- **E** as cestas de dieta incompatível aparecem bloqueadas, com a razão escrita na própria
+  linha
+- **E quando** escolhe uma compatível
+- **Então** o painel fecha e o botão do rodapé passa a mostrar a cesta escolhida
+
+## Critérios de aceitação
+
+- [ ] O encontro mostra a condição do céu e a velocidade e direção do vento antes do arremesso.
+- [ ] A direção mostrada é a do empurrão, e a cesta de fato desvia para esse lado.
+- [ ] Vento zero devolve o comportamento anterior, sem desvio nenhum.
+- [ ] O mesmo arremesso repetido com o mesmo clima cai sempre no mesmo ponto.
+- [ ] Com chuva, a cesta escorrega visivelmente ao tocar o chão, e o resultado sai depois disso.
+- [ ] Sol e nublado não mudam número nenhum.
+- [ ] Sem localização ou sem rede, o encontro funciona como sol sem vento, calado.
+- [ ] Todos os parâmetros de clima são ajustáveis pelo laboratório sem recompilar, inclusive
+      forçar uma condição.
+- [ ] O rodapé tem um único botão de cestas, e ele nomeia a cesta selecionada.
+- [ ] O painel de cestas mostra as nove, com as incompatíveis bloqueadas e justificadas.
+- [ ] Escolher no painel fecha o painel e o arremesso seguinte consome da cesta escolhida.
+- [ ] O alvo lê como sombra no chão, e não como elipse flutuando.
+- [ ] Nenhum critério de aceitação da spec original deixou de valer.
+
+## Fora de escopo declarado (extensão 2)
+
+- **Clima no santuário** — o santuário é uma tela de gestão, não tem arremesso.
+- **Partículas de chuva, neve, neblina, raio** — atmosfera além do necessário para ler a
+  condição fica para a arte final.
+- **Previsão e planejamento** — o jogador não escolhe quando sair para jogar em função do clima.
+- **Clima como conteúdo** — nada de espécie exclusiva de chuva, nem bônus por clima raro.
+

@@ -171,3 +171,165 @@ Depois, no simulador:
     não existem.
 13. Com Dynamic Type em tamanho de acessibilidade, os três botões da barra continuam
     alcançáveis.
+
+---
+
+# Extensão 2 — clima, hub de cestas e perspectiva
+
+> **Spec:** `./spec.md` › Extensão 2
+> **Status:** aprovado, com T011 bloqueada no Figma
+
+## Stack escolhida
+
+| Item | Escolha | Por quê |
+| --- | --- | --- |
+| Fonte do clima | **WeatherKit** (`import WeatherKit`) | Nativo desde iOS 16, sem dependência, sem chave de API no repo, sem servidor. Degrau 4 do Artigo 7. Alternativa (OpenWeather + `URLSession` + chave) só ganharia se precisássemos de Android hoje — não precisamos. |
+| Localização | **CoreLocation**, `requestWhenInUseAuthorization` + `requestLocation` | WeatherKit precisa de coordenada. Uma leitura por encontro, sem rastreamento contínuo, sem `startUpdatingLocation`. |
+| Física do desvio | Aritmética de vetor na view, função pura no modelo | O desvio é um deslocamento do ponto de pouso, não simulação. Nenhuma engine. |
+| Hub de cestas | `.sheet` + `.presentationDetents` | Nativo. O padrão Pokémon GO é uma sheet com lista — SwiftUI já entrega o detent, o arrasto e o dimming. |
+| Perspectiva | SwiftUI, tokens vindos do Figma | Nada de SpriteKit/SceneKit por um chão em perspectiva. |
+| Persistência | **Nenhuma** | O clima não é salvo, nem cacheado entre encontros. |
+
+## Reuse
+
+| Já existe | Uso nesta extensão |
+| --- | --- |
+| `RescueBalance` | **Estender.** `windDriftPerKmh`, `rainSkidMax`, `rainSkidDuration` entram aqui. Não nasce um segundo struct de configuração. |
+| `RescueLabSheet` (T005) | **Estender.** A seção "Clima" entra no `Form` existente, não numa tela nova. |
+| `targetSquash` (`RescueView`) | **Reusar.** Já desenha o alvo e julga a distância; agora achata também a componente vertical do desvio. Continua sendo **um** número. |
+| `SanctuaryTheme`, `SoftActionButtonStyle`, `SanctuaryHaptics`, `NoticeBanner` | **Reusar.** Nenhuma cor, estilo ou háptico novo. |
+| `StretchHaptics` (`Components.swift`) | **Não tocar.** O háptico da corda é ortogonal ao clima. |
+| `RescueEngine` | **Não tocar.** Chance e fuga não sabem que existe clima — o clima só move o ponto de pouso, e o engine recebe o ponto já movido. |
+| `SanctuaryStore` | **Não reusar.** O encontro continua ilha. |
+
+## Arquitetura
+
+```
+WeatherModels.swift   (novo — Foundation + CoreLocation + WeatherKit, zero SwiftUI)
+   SkyCondition · WeatherConditions
+   WeatherProvider     → @MainActor ObservableObject; refresh() async, override()
+   WeatherEngine       → landing(aimed:throwVector:conditions:balance:squash:) puro
+
+RescueModels.swift    (alterado)
+   RescueBalance      + windDriftPerKmh, rainSkidMax, rainSkidDuration
+
+RescueView.swift      (alterado)
+   @StateObject WeatherProvider   → .task { await refresh() }, nunca bloqueia a abertura
+   gesto: pouso mirado → WeatherEngine.landing → RescueEngine.precision
+   topBar: faixa de vento + céu (T009)
+   rodapé: um botão → BasketSheet (T010)
+   RescueLabSheet: seção Clima (T007)
+```
+
+**Fluxo de uma tentativa, atualizado** — os passos 1 e 2 do fluxo original passam a ser:
+
+1. O vetor de puxada, espelhado e multiplicado por `throwSensitivity`, dá o **pouso mirado**.
+1b. `WeatherEngine.landing` aplica vento e chuva e dá o **pouso real**.
+2. A cesta anima até o pouso do vento em `throwDuration` e, com chuva, escorrega o trecho
+   restante em `rainSkidDuration`. Do passo 3 em diante nada muda.
+
+**Convenção de direção, num lugar só:** `windFromDegrees` é meteorológica — de onde o vento
+vem. O empurrão é `windFromDegrees + 180°`, e a bússola é sobrada na arena com 0° no topo da
+tela. Essa conversão mora **dentro** de `WeatherEngine.landing`; a seta do mostrador consome a
+mesma função, não uma segunda fórmula. É a mesma armadilha que o risco do alvo elíptico já
+tinha na extensão 1.
+
+```
+// ponytail: bússola achatada em cima da arena, 0° = topo. Se a perspectiva de T011
+// mudar o eixo do chão, este é o único lugar a mexer.
+```
+
+**Degradação:** sem permissão, sem rede ou sem entitlement, `WeatherProvider` fica em
+`.clearCalm` / `source = .fallback`. Isso é o dia de sol — o comportamento anterior à extensão.
+Nada de alerta, nada de repedir permissão. A spec registra que isso vira incentivo perverso se
+o clima entrar no jogo final.
+
+## Arquivos tocados
+
+| Arquivo | Novo/alterado | O que muda |
+| --- | --- | --- |
+| `SantuarioPOC/Models/WeatherModels.swift` | **novo** | `SkyCondition`, `WeatherConditions`, `WeatherProvider`, `WeatherEngine`. |
+| `SantuarioPOC/Models/RescueModels.swift` | alterado | Três parâmetros novos em `RescueBalance`. |
+| `SantuarioPOC/Views/RescueView.swift` | alterado | Clima no gesto, faixa de vento, hub de cestas, perspectiva. |
+| `SantuarioPOC/SantuarioPOC.entitlements` | **novo** | `com.apple.developer.weatherkit`. Criado pelo Xcode ao ligar a capability. |
+| `SantuarioPOC.xcodeproj/project.pbxproj` | alterado | `CODE_SIGN_ENTITLEMENTS` e `INFOPLIST_KEY_NSLocationWhenInUseUsageDescription`. |
+
+**A extensão 1 prometia zero entradas no `project.pbxproj`. Esta quebra essa promessa** — é o
+preço de uma capability e de uma permissão de sistema, e não há caminho que a evite. Fora
+isso, continua sendo arquivo novo entrando sozinho no target pelo
+`PBXFileSystemSynchronizedRootGroup`.
+
+## Pré-requisito de conta (fora do código)
+
+WeatherKit exige, uma vez só:
+
+1. **App ID** `com.endangeredanimalrescue.SantuarioPOC` com WeatherKit marcado no portal da
+   Apple. O bundle id já é explícito, não wildcard — serve.
+2. **Capability** no target, pelo Xcode. Team `J63SH8A52R` já está configurado.
+3. Propagação do App ID leva até ~30 min.
+
+Limite gratuito: 500 mil chamadas/mês. Uma chamada por encontro não chega perto.
+
+`xcodebuild ... CODE_SIGNING_ALLOWED=NO` **continua compilando** depois disso — o entitlement
+simplesmente não é aplicado, e o app cai no caminho `.fallback`. O comando de verificação de
+`AGENTS.md` segue válido; só o teste do clima real precisa de device assinado.
+
+## Parâmetros provisórios introduzidos
+
+| Parâmetro | Valor provisório | No laboratório |
+| --- | --- | --- |
+| `windDriftPerKmh` | 1,2 pt/km/h | sim, 0–4 |
+| `rainSkidMax` | 26 pt | sim, 0–80 |
+| `rainSkidDuration` | 0,22 s | não — ritmo, como `throwDuration` |
+| chuva "no talo" | 7,5 mm/h | não — só o mapeamento do WeatherKit |
+
+## Riscos
+
+- **Calibração às cegas.** `windDriftPerKmh` sai de um chute, e o simulador não venta. Sinal:
+  acertar com vento parece sorte, ou o vento parece decorativo. Mitigação: ajustável no
+  laboratório, e o clima é forçável à mão sem sair de casa.
+- **Vento forte pode inviabilizar o encontro.** 60 km/h × 1,2 = 72 pt de desvio contra 82 pt de
+  raio. Sinal: dia de vendaval, nenhum resgate. Nenhum teto foi aplicado de propósito —
+  está registrado como decisão em aberto na spec, não resolvido em silêncio.
+- **Duas convenções de ângulo.** Meteorológica (de onde vem) versus a da tela (para onde
+  empurra). Se a seta e o desvio divergirem, o jogo mente para o jogador. Mitigação: uma função
+  só, consumida pelos dois.
+- **Negar a localização é a estratégia ótima.** Sem clima, o jogo fica no modo mais fácil.
+  Aceitável numa POC, inaceitável no jogo final — registrado na spec.
+- **T011 depende de um arquivo que ainda não existe.** Se o Figma atrasar, T007–T010 entregam
+  sozinhas e a perspectiva fica para depois. Por isso T011 é a última e não bloqueia nada.
+- **Privacidade.** A permissão é `WhenInUse`, uma leitura por encontro, nada persistido e nada
+  enviado a terceiros além da própria Apple. O texto de justificativa no Info.plist precisa
+  dizer isso em uma frase honesta.
+
+## Como verificar de ponta a ponta
+
+```sh
+xcodebuild -project "SantuarioPOC.xcodeproj" -scheme SantuarioPOC \
+  -destination "platform=iOS Simulator,name=iPhone 17" \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+No simulador (clima simulado, pelo laboratório):
+
+1. Abrir o encontro → a faixa de clima aparece; o laboratório diz "clima simulado".
+2. Vento em 0 → sem elipse fantasma, e o arremesso cai onde caía antes.
+3. Vento 40 km/h vindo de 270° → a seta aponta para a direita e a cesta desvia para a direita.
+   Mudar para 90° → inverte.
+4. Repetir o mesmo arremesso três vezes com o mesmo clima → mesmo ponto de pouso.
+5. `sky = .rain`, intensidade 1 → a cesta escorrega depois de tocar o chão, e o desfecho sai
+   depois do escorregão.
+6. Errar por vento → cesta consumida e fuga sorteada, igual a qualquer erro.
+7. Rodapé: um botão só, nomeando a cesta selecionada. Abrir → nove cestas, seis bloqueadas com
+   a razão escrita.
+8. Escolher uma cesta → o painel fecha, o botão muda, o arremesso seguinte consome dela.
+9. Zerar um nível → aquela linha fica bloqueada com "sem estoque".
+10. Dynamic Type em tamanho de acessibilidade → faixa de clima, botão e painel legíveis.
+11. VoiceOver na faixa de clima → uma frase só, com direção e velocidade.
+
+Em device assinado:
+
+12. Conceder a localização → o laboratório diz "clima real" e a velocidade bate com a da cidade.
+13. Negar a localização → nada de alerta; o encontro roda como sol sem vento.
+14. Modo avião → mesmo comportamento do item 13.
+

@@ -5,7 +5,14 @@
 
 ## Ordem de execução
 
-T001 → T002 → T003 → T004 → (T005 [P] ‖ T006 [P])
+T001 → T002 → T003 → T004 → (T005 [P] ‖ T006 [P])   ✅ entregues
+
+**Extensão 2 — clima, hub de cestas e perspectiva:**
+
+T007 → T008 → T009 → T010 → T011
+
+Nenhuma é `[P]`: T008–T011 tocam todas o mesmo `RescueView.swift`. Se a capability do
+WeatherKit atrasar T007, puxe **T010 para a frente** — ela não depende de clima.
 
 ---
 
@@ -355,10 +362,335 @@ Layout, de cima para baixo, num `ZStack` sobre `SanctuaryBackdrop()`:
 
 ---
 
-## Depois de todas as tasks
+## Depois de todas as tasks (extensão 1)
 
 - [ ] Orquestrador revisa os diffs contra `spec.md`
 - [ ] Parâmetros provisórios do `plan.md` estão todos nomeados e rotulados
 - [ ] Nenhum `[NEEDS CLARIFICATION]` foi resolvido por invenção
 - [ ] Build limpo com o comando de `AGENTS.md` › Verificar a build
 - [ ] Commit sem assinatura de modelo (ver `AGENTS.md` › Convenções de commit)
+
+---
+---
+
+# Extensão 2 — clima, hub de cestas e perspectiva
+
+> **Spec:** `./spec.md` › Extensão 2 · **Plan:** `./plan.md` › Extensão 2
+
+### T007 — Clima: modelo, provedor e controle no laboratório
+
+- **Agente:** `task-implementer`
+- **Depende de:** T005 (o laboratório precisa existir)
+- **Paralelizável:** não
+
+**Objetivo:** ter uma condição de clima disponível na tela de encontro, vinda do WeatherKit
+quando ele responder e do laboratório quando não responder. **Esta task não muda o arremesso**
+— ela só entrega o dado e o controle manual.
+
+**Arquivos:**
+- `SantuarioPOC/Models/WeatherModels.swift` — criar
+- `SantuarioPOC/Views/RescueView.swift` — alterar (carregar o clima, controles no laboratório)
+- `SantuarioPOC/SantuarioPOC.entitlements` — criar
+- `SantuarioPOC.xcodeproj/project.pbxproj` — alterar (`CODE_SIGN_ENTITLEMENTS`,
+  `INFOPLIST_KEY_NSLocationWhenInUseUsageDescription`)
+
+**O que criar, exatamente:**
+
+```swift
+// WeatherModels.swift — Foundation + CoreLocation + WeatherKit. Nada de SwiftUI.
+
+enum SkyCondition: String, CaseIterable, Identifiable  // clear, cloudy, rain
+    var title: String     // "Sol", "Nublado", "Chuva"
+    var symbol: String    // SF Symbol: sun.max.fill / cloud.fill / cloud.rain.fill
+
+struct WeatherConditions: Equatable {
+    var sky: SkyCondition
+    var windSpeedKmh: Double      // 0…60 é a faixa útil
+    var windFromDegrees: Double   // 0 = vento VINDO do norte (convenção meteorológica)
+    var rainIntensity: Double     // 0…1; 0 quando sky != .rain
+
+    static let clearCalm = WeatherConditions(sky: .clear, windSpeedKmh: 0,
+                                             windFromDegrees: 0, rainIntensity: 0)
+}
+
+@MainActor final class WeatherProvider: ObservableObject {
+    @Published var conditions: WeatherConditions = .clearCalm
+    @Published var source: Source = .fallback   // .live, .fallback, .manual
+    enum Source { case live, fallback, manual }
+
+    func refresh() async          // localização → WeatherKit → conditions; erro = mantém e marca .fallback
+    func override(_ c: WeatherConditions)  // laboratório; marca .manual e não é sobrescrito por refresh
+}
+```
+
+**Mapeamento do WeatherKit** (`CurrentWeather`):
+- `wind.speed` convertido para km/h; `wind.direction` em graus vai direto para `windFromDegrees`.
+- `precipitationIntensity` (mm/h) → `rainIntensity = min(mm/h ÷ 7.5, 1)` — **valor provisório**.
+- `condition` → `.rain` para qualquer variante de chuva/chuvisco/tempestade; `.cloudy` acima de
+  50 % de `cloudCover`; senão `.clear`. Não modele neve, granizo nem neblina.
+
+**Localização:** `CLLocationManager` com `requestWhenInUseAuthorization()` e
+`requestLocation()`. Permissão negada, indisponível ou timeout → **não é erro visível**:
+mantém `.clearCalm`, marca `source = .fallback`, e o laboratório segue mandando. Nada de alerta.
+
+**Capability (fazer uma vez, no Xcode — a task não compila sem isto):**
+1. Em developer.apple.com → Identifiers → `com.endangeredanimalrescue.SantuarioPOC` → marcar
+   **WeatherKit** e salvar.
+2. No Xcode, target `SantuarioPOC` → Signing & Capabilities → **+ Capability → WeatherKit**.
+   Isso cria o `.entitlements` e liga `com.apple.developer.weatherkit`.
+3. Propagar o App ID pode levar ~30 min do lado da Apple.
+
+**Laboratório (`RescueLabSheet`), seção nova "Clima", no topo:**
+- `Picker` de `SkyCondition`, `Slider` de `windSpeedKmh` (0–60), `Slider` de `windFromDegrees`
+  (0–359), `Slider` de `rainIntensity` (0–1, só quando `sky == .rain`).
+- Um `Toggle` "Usar clima real" que, ao ligar, chama `refresh()`; ao desligar, volta para
+  `.manual`.
+- Uma linha de texto mostrando `source`: "clima real", "clima simulado" ou "ajustado à mão".
+
+**Reuse obrigatoriamente:**
+- O padrão de `Form`/`NavigationStack` do `RescueLabSheet` que T005 já criou — a seção Clima
+  entra nele, não numa tela nova.
+- `RescueBalance` para os números provisórios do clima. **Não** crie um segundo struct de
+  configuração.
+
+**Não faça:**
+- Não mexa no arremesso, na precisão, na chance nem em `RescueEngine`. Isso é T008.
+- Não desenhe indicador de vento na tela de encontro. Isso é T009.
+- Não persista nada. Não faça cache do clima entre encontros.
+- Não bloqueie a abertura do encontro esperando a resposta do WeatherKit — a tela abre com
+  `.clearCalm` e atualiza quando (e se) a resposta chegar.
+- Não trate `CODE_SIGNING_ALLOWED=NO` como erro: naquele build o entitlement não é aplicado e o
+  WeatherKit falha — é exatamente o caminho `.fallback`.
+
+**Critério de aceitação:**
+- O projeto compila com o comando de `AGENTS.md`, que não assina.
+- No simulador sem assinatura: o encontro abre normal, o laboratório mostra "clima simulado", e
+  mexer nos sliders muda o valor exibido.
+- Em device assinado, com permissão concedida: o laboratório mostra "clima real" e uma
+  velocidade de vento plausível para a sua cidade.
+- Negar a permissão de localização não trava nem alerta nada — só mantém "clima simulado".
+
+---
+
+### T008 — Vento desvia o pouso, chuva faz a cesta escorregar
+
+- **Agente:** `task-implementer`
+- **Depende de:** T007
+- **Paralelizável:** não
+
+**Objetivo:** o clima passa a mudar **onde a cesta cai** — e só isso. A área de acerto, a
+fórmula de chance e a fuga continuam idênticas.
+
+**Arquivos:**
+- `SantuarioPOC/Models/WeatherModels.swift` — alterar (a função pura)
+- `SantuarioPOC/Models/RescueModels.swift` — alterar (parâmetros novos em `RescueBalance`)
+- `SantuarioPOC/Views/RescueView.swift` — alterar (aplicar no gesto e animar o escorregão)
+
+**A regra, num lugar só:**
+
+```swift
+extension WeatherEngine {
+    /// Pouso mirado → pouso real. Vento empurra; chuva escorrega na direção do voo.
+    static func landing(aimed: CGPoint, throwVector: CGVector,
+                        conditions: WeatherConditions, balance: RescueBalance,
+                        squash: Double) -> CGPoint
+}
+```
+
+- **Vento:** módulo = `windSpeedKmh × balance.windDriftPerKmh`. Direção = para onde o vento
+  sopra, ou seja `windFromDegrees + 180°`. Bússola sobre a arena: 0° = topo da tela.
+- **Chuva:** módulo = `rainIntensity × balance.rainSkidMax`, na direção do vetor de arremesso
+  normalizado. Sem chuva, zero.
+- **Perspectiva:** a componente vertical dos dois desvios é multiplicada por `squash` — o mesmo
+  `targetSquash` que desenha e julga o alvo. Uma conta só, como já vale para a distância.
+- Sol e nublado não entram na conta. `SkyCondition` não tem multiplicador.
+
+**Na view:**
+- O gesto calcula o pouso mirado como hoje, passa por `WeatherEngine.landing`, e é o resultado
+  disso que vai para `RescueEngine.precision`.
+- A animação: a cesta voa até o pouso já desviado pelo vento em `throwDuration`, e **depois**
+  escorrega o trecho da chuva em `balance.rainSkidDuration` com `.easeOut`. Duas animações
+  encadeadas, não uma.
+
+**Parâmetros provisórios novos em `RescueBalance`, expostos no laboratório logo abaixo de
+`throwSensitivity`:**
+
+| Parâmetro | Valor provisório | Faixa no laboratório |
+| --- | --- | --- |
+| `windDriftPerKmh` | 1,2 pt por km/h | 0–4 |
+| `rainSkidMax` | 26 pt com chuva no talo | 0–80 |
+| `rainSkidDuration` | 0,22 s | fixo, não expor |
+
+Com `hitRadiusBase` em 82 pt, 20 km/h dá ~24 pt de desvio: sentido, mas compensável. É esse o
+alvo de tato.
+
+**Não faça:**
+- Não mexa em `RescueEngine`. A chance de resgate e a de fuga não sabem que existe clima.
+- Não limite o arremesso nem "corrija" o desvio para dentro da tela.
+- Não faça o desvio depender da raridade, do nível de cesta ou de upgrade.
+- Não desenhe nada. Indicadores são T009.
+
+**Critério de aceitação:**
+- Com vento em 0 no laboratório, o arremesso cai exatamente onde caía antes desta task.
+- Vento em 40 km/h vindo do oeste (270°) empurra a cesta visivelmente **para a direita**;
+  mudar para 90° inverte o lado.
+- O mesmo arremesso repetido com o mesmo clima cai sempre no mesmo ponto — o desvio é
+  determinístico, não sorteado.
+- Com `sky = .rain` e `rainIntensity = 1`, a cesta toca o chão e escorrega mais um pouco na
+  direção em que voava, antes do desfecho aparecer.
+- Errar por causa do vento consome a cesta e sorteia fuga igual a qualquer outro erro.
+
+---
+
+### T009 — Mostrador de vento e de chuva
+
+- **Agente:** `task-implementer`
+- **Depende de:** T008
+- **Paralelizável:** não
+
+**Objetivo:** o jogador consegue mirar compensando o vento porque **vê** o vento antes de puxar.
+
+**Arquivos:**
+- `SantuarioPOC/Views/RescueView.swift` — alterar
+
+**Comportamento:**
+- Uma faixa de clima na `topBar`, à esquerda do botão de laboratório:
+  - Seta (`arrow.up`) rotacionada para **onde o vento sopra** — a mesma direção que empurra a
+    cesta em T008, não a de origem. Se as duas discordarem, o mostrador está mentindo.
+  - Número com a velocidade: `"12 km/h"`.
+  - O símbolo de `SkyCondition` ao lado.
+  - Intensidade da cor da seta acompanha a velocidade: cinza parado, `SanctuaryTheme.lime` em
+    vento fraco, laranja/vermelho da paleta em vento forte. Só se a paleta já tiver essas cores
+    — se não tiver, varie a opacidade. **Nenhuma cor nova.**
+- Sobre o alvo, quando houver vento: uma segunda elipse fantasma (traço pontilhado, opacidade
+  baixa) no ponto para onde um arremesso "reto" cairia — a prévia do desvio.
+- Com chuva, uma linha pontilhada curta saindo do alvo na direção do último arremesso não
+  significa nada e **não deve existir**: o escorregão só é visível na animação.
+
+**Acessibilidade:**
+- A faixa inteira é um só elemento com `accessibilityLabel` do tipo
+  `"Vento de 12 quilômetros por hora, soprando para a direita. Chuva."` Não deixe a seta e o
+  número como dois elementos separados.
+- Nada de informação só por cor: a velocidade em número já carrega o que a cor reforça.
+
+**Reuse obrigatoriamente:**
+- `SanctuaryTheme` inteiro. Nenhuma cor, fonte ou estilo novo.
+- O `targetSquash` já existente para achatar a elipse fantasma igual à do alvo.
+
+**Não faça:**
+- Não anime a seta com pulso, tremor ou partícula. Nem chuva caindo na tela — atmosfera é T011.
+- Não mostre a origem do vento em texto ("vento norte"); o jogador precisa da direção do
+  empurrão, não da rosa dos ventos.
+- Não recalcule o desvio aqui. A elipse fantasma chama a **mesma** `WeatherEngine.landing`.
+
+**Critério de aceitação:**
+- Girar `windFromDegrees` no laboratório gira a seta, e a cesta arremessada cai do lado para
+  onde a seta aponta.
+- Vento em 0 esconde a elipse fantasma e a seta fica neutra.
+- Com VoiceOver, a faixa é lida numa frase só, com direção e velocidade.
+
+---
+
+### T010 — Hub de cestas em sheet, no lugar do rodapé de duas linhas
+
+- **Agente:** `task-implementer`
+- **Depende de:** T004 (não depende de clima — pode ser puxada para a frente)
+- **Paralelizável:** não (toca `RescueView.swift`, como T008 e T009)
+
+**Objetivo:** trocar as duas fileiras do rodapé por **um botão** que abre uma sheet com todas as
+cestas, no formato do Pokémon GO.
+
+**Arquivos:**
+- `SantuarioPOC/Views/RescueView.swift` — alterar
+
+**Comportamento:**
+- O rodapé passa a ter **um** botão largo, mostrando a cesta selecionada: emoji da família,
+  nome canônico da cesta (`family.basketName(tier:)`) e o estoque restante. Toque abre a sheet.
+- A sheet lista as **9 cestas**, agrupadas pelas três famílias, cada linha com emoji, nome
+  canônico, e o estoque à direita.
+  - Família compatível: selecionável. Toque escolhe, dá `SanctuaryHaptics.selection()`, fecha a
+    sheet e atualiza o botão.
+  - Família incompatível: linha esmaecida, não selecionável, com a razão visível na própria
+    linha — `"\(species.displayName) não come isto"`. **Não** use a mensagem no banner para
+    isso; na sheet a razão fica junto do item.
+  - Estoque zerado: linha esmaecida, não selecionável, marcada `"sem estoque"`.
+- `.presentationDetents([.medium, .large])` e `.presentationDragIndicator(.visible)`.
+- A cesta selecionada tem marca visível na lista (`checkmark` ou borda da paleta).
+
+**Reuse obrigatoriamente:**
+- `RescueEngine.isCompatible` — o bloqueio de dieta continua na regra, não na view.
+- `SoftActionButtonStyle` / `FilledActionButtonStyle` no botão do rodapé.
+- `SanctuaryTheme` e os hápticos existentes.
+
+**Não faça:**
+- Não crie um arquivo novo de view. A sheet mora em `RescueView.swift`, como o laboratório.
+- Não mude `RescueBalance`, `RescueEngine`, o estoque, nem o consumo por arremesso.
+- Não deixe a sheet aberta depois de escolher, e não permita escolher com o arremesso em voo.
+- Não introduza "cesta favorita", "última usada" nem qualquer memória entre encontros.
+- Não some com os nomes canônicos das cestas: eles são canon (Artigo 3).
+
+**Critério de aceitação:**
+- O rodapé tem exatamente um botão, e ele nomeia a cesta atualmente selecionada.
+- A sheet mostra as 9 cestas; as 6 de famílias incompatíveis estão visivelmente bloqueadas com
+  a razão escrita.
+- Escolher uma cesta fecha a sheet e o botão passa a mostrá-la; o arremesso seguinte consome
+  dela.
+- Zerar um nível pela sheet deixa a linha bloqueada com "sem estoque".
+- Com Dynamic Type em tamanho de acessibilidade, o botão e as linhas da sheet continuam legíveis
+  e alcançáveis.
+
+---
+
+### T011 — Perspectiva e acabamento visual do encontro
+
+- **Agente:** `task-implementer`
+- **Depende de:** T009, T010, **e do arquivo do Figma** (o dono do repo está montando)
+- **Paralelizável:** não
+- **Status:** 🚧 **bloqueada** — não comece sem o link do Figma
+
+**Objetivo:** encaixar animal, estilingue e ambiente numa perspectiva que faça o alvo no chão
+parecer chão, seguindo o beta que vier do Figma.
+
+**Arquivos:**
+- `SantuarioPOC/Views/RescueView.swift` — alterar
+- possivelmente `SantuarioPOC/Views/Components.swift` — alterar, **só** se o Figma pedir um
+  componente reaproveitável de verdade
+
+**Antes de começar:**
+1. Carregue a skill `figma-design-to-code` (obrigatória antes de `get_design_context`) e a
+   `figma-swiftui`.
+2. Extraia tokens do Figma e **confronte com `SanctuaryTheme`**: cor que já existe na paleta
+   reusa o token existente. Cor genuinamente nova entra em `SanctuaryTheme`, nomeada — nunca
+   um hex solto na view.
+
+**Restrições inegociáveis:**
+- `targetSquash` continua sendo **um** número, usado para desenhar o alvo, para julgar a
+  distância (T004) e para achatar o desvio do clima (T008). Se a perspectiva nova pedir outro
+  achatamento, mude o valor — nunca duplique a constante.
+- `RescueModels.swift` não é tocado. Nenhuma regra muda de comportamento nesta task.
+- O gesto de puxar-e-soltar, os hápticos de esticar a corda (`StretchHaptics`) e o consumo de
+  estoque ficam exatamente como estão.
+- O que a concept art traz e o jogo não tem continua não existindo: barra de Confiança,
+  segmentos, seleção de frutos individuais (Artigo 3).
+
+**Não faça:**
+- Não adicione SpriteKit, SceneKit, Lottie, Rive nem qualquer dependência. É SwiftUI.
+- Não troque emoji por arte final: ilustração por espécie segue fora de escopo.
+- Não recrie o hub de cestas de T010 do zero porque o Figma desenhou diferente — ajuste o
+  visual, preserve o comportamento aceito.
+
+**Critério de aceitação:**
+- A tela se parece com o beta do Figma nas proporções e no enquadramento.
+- Todos os critérios de aceitação de T004, T008, T009 e T010 continuam passando sem alteração.
+- Nenhum hex literal novo fora de `SanctuaryTheme`.
+- Com Dynamic Type em tamanho de acessibilidade, nada é cortado nem fica inalcançável.
+
+---
+
+## Depois da extensão 2
+
+- [ ] Orquestrador revisa os diffs contra `spec.md` › Extensão 2
+- [ ] `[NEEDS CLARIFICATION]` do clima continuam registrados, não resolvidos por invenção
+- [ ] `windDriftPerKmh` e `rainSkidMax` calibrados **no aparelho**, não no simulador
+- [ ] Build limpo com o comando de `AGENTS.md` › Verificar a build
+- [ ] Commit sem assinatura de modelo
