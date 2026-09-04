@@ -24,6 +24,7 @@ struct RescueView: View {
     @State private var encounter = Encounter.random(balance: .poc)
     @State private var message: SanctuaryNotice?
     @State private var showsLab = false
+    @StateObject private var weather = WeatherProvider()
 
     // Distância entre estes dois pontos julga o arremesso; ambos em .named("rescueArena").
     @State private var targetCenter: CGPoint = .zero
@@ -35,6 +36,10 @@ struct RescueView: View {
 
     // Mesmo achatamento usado para desenhar o alvo e para julgar a distância — uma conta só.
     private let targetSquash: Double = 0.45
+
+    // Puxada considerada "corda no limite" para o háptico. Não limita o arremesso.
+    private let maxPull: Double = 150
+    private let stretchHaptics = StretchHaptics()
 
     var body: some View {
         ZStack {
@@ -54,6 +59,7 @@ struct RescueView: View {
             .padding(.bottom, 18)
         }
         .coordinateSpace(name: "rescueArena")
+        .task { await weather.refresh() }
         .overlay(alignment: .bottom) {
             if let message, !encounterEnded {
                 NoticeBanner(notice: message)
@@ -70,7 +76,7 @@ struct RescueView: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: message)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: encounterEnded)
         .sheet(isPresented: $showsLab) {
-            RescueLabSheet(balance: $balance, rollNewAnimal: startNewEncounter)
+            RescueLabSheet(balance: $balance, weather: weather, rollNewAnimal: startNewEncounter)
         }
     }
 
@@ -293,9 +299,12 @@ struct RescueView: View {
             .onChanged { value in
                 guard canThrow else { return }
                 dragTranslation = value.translation
+                let pull = hypot(value.translation.width, value.translation.height)
+                stretchHaptics.update(progress: pull / maxPull)
             }
             .onEnded { value in
                 guard canThrow else { return }
+                stretchHaptics.release()
                 let translation = value.translation
                 let landing = CGPoint(
                     x: basketCenter.x - translation.width * balance.throwSensitivity,
@@ -509,6 +518,7 @@ struct RescueView: View {
 
 struct RescueLabSheet: View {
     @Binding var balance: RescueBalance
+    @ObservedObject var weather: WeatherProvider
     var rollNewAnimal: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -523,6 +533,27 @@ struct RescueLabSheet: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Section("Clima") {
+                    Picker("Céu", selection: skyBinding) {
+                        ForEach(SkyCondition.allCases) { sky in
+                            Text(sky.title).tag(sky)
+                        }
+                    }
+
+                    sliderRow("Velocidade do vento", value: windSpeedBinding, range: 0...60, format: "%.0f km/h")
+                    sliderRow("Direção do vento (de onde vem)", value: windDirectionBinding, range: 0...359, format: "%.0f°")
+
+                    if weather.conditions.sky == .rain {
+                        sliderRow("Intensidade da chuva", value: rainIntensityBinding, range: 0...1, format: "%.2f")
+                    }
+
+                    Toggle("Usar clima real", isOn: useRealWeatherBinding)
+
+                    Text("Fonte: \(weatherSourceLabel)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Calibração de toque") {
@@ -610,6 +641,62 @@ struct RescueLabSheet: View {
         Binding(
             get: { balance.fleeChance[rarity, default: 0] },
             set: { balance.fleeChance[rarity] = $0 }
+        )
+    }
+
+    // MARK: - Clima
+
+    private var weatherSourceLabel: String {
+        switch weather.source {
+        case .live: "clima real"
+        case .fallback: "clima simulado"
+        case .manual: "ajustado à mão"
+        }
+    }
+
+    private var skyBinding: Binding<SkyCondition> {
+        Binding(
+            get: { weather.conditions.sky },
+            set: { newSky in
+                var conditions = weather.conditions
+                conditions.sky = newSky
+                if newSky != .rain { conditions.rainIntensity = 0 }
+                weather.override(conditions)
+            }
+        )
+    }
+
+    private var windSpeedBinding: Binding<Double> {
+        Binding(
+            get: { weather.conditions.windSpeedKmh },
+            set: { var conditions = weather.conditions; conditions.windSpeedKmh = $0; weather.override(conditions) }
+        )
+    }
+
+    private var windDirectionBinding: Binding<Double> {
+        Binding(
+            get: { weather.conditions.windFromDegrees },
+            set: { var conditions = weather.conditions; conditions.windFromDegrees = $0; weather.override(conditions) }
+        )
+    }
+
+    private var rainIntensityBinding: Binding<Double> {
+        Binding(
+            get: { weather.conditions.rainIntensity },
+            set: { var conditions = weather.conditions; conditions.rainIntensity = $0; weather.override(conditions) }
+        )
+    }
+
+    private var useRealWeatherBinding: Binding<Bool> {
+        Binding(
+            get: { weather.source == .live },
+            set: { useReal in
+                if useReal {
+                    Task { await weather.refresh(force: true) }
+                } else {
+                    weather.override(weather.conditions)
+                }
+            }
         )
     }
 }
