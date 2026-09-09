@@ -606,12 +606,24 @@ cestas, no formato do Pokémon GO.
 
 **Arquivos:**
 - `SantuarioPOC/Views/RescueView.swift` — alterar
+- `SantuarioPOC/Models/RescueModels.swift` — alterar (`imageName` em `BasketFamily`)
+
+**Arte das cestas — assets temporários, já no catálogo:**
+
+| Família | Imageset |
+| --- | --- |
+| carnivore | `cesta-carnes` |
+| herbivore | `cesta-frutas` |
+| invertebrate | `cesta-invertebrados` |
+
+Entram no lugar do emoji de `BasketFamily.symbol`, tanto no hub quanto na cesta do estilingue.
+São **provisórios** — arte final por cesta é acabamento e segue fora de escopo.
 
 **Comportamento:**
-- O rodapé passa a ter **um** botão largo, mostrando a cesta selecionada: emoji da família,
+- O rodapé passa a ter **um** botão largo, mostrando a cesta selecionada: imagem da família,
   nome canônico da cesta (`family.basketName(tier:)`) e o estoque restante. Toque abre a sheet.
-- A sheet lista as **9 cestas**, agrupadas pelas três famílias, cada linha com emoji, nome
-  canônico, e o estoque à direita.
+- A sheet lista as **9 cestas**, agrupadas pelas três famílias, cada linha com a imagem da
+  família, nome canônico, e o estoque à direita.
   - Família compatível: selecionável. Toque escolhe, dá `SanctuaryHaptics.selection()`, fecha a
     sheet e atualiza o botão.
   - Família incompatível: linha esmaecida, não selecionável, com a razão visível na própria

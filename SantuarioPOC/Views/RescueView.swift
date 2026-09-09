@@ -24,6 +24,7 @@ struct RescueView: View {
     @State private var encounter = Encounter.random(balance: .poc)
     @State private var message: SanctuaryNotice?
     @State private var showsLab = false
+    @State private var showsBasketSheet = false
     @StateObject private var weather = WeatherProvider()
 
     // Distância entre estes dois pontos julga o arremesso; ambos em .named("rescueArena").
@@ -367,8 +368,10 @@ struct RescueView: View {
                 .fill(SanctuaryTheme.forest)
                 .frame(width: 64, height: 64)
                 .overlay(Circle().stroke(SanctuaryTheme.lime, lineWidth: 2))
-            Text(encounter.species.family.symbol)
-                .font(.system(size: 30))
+            Image(encounter.species.family.imageName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 40, height: 40)
         }
         .accessibilityHidden(true)
     }
@@ -486,127 +489,44 @@ struct RescueView: View {
     // MARK: - Rodapé
 
     private var footer: some View {
-        VStack(spacing: 12) {
-            familiesRow
-            tiersRow
-        }
-    }
-
-    private var familiesRow: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 8) {
-                    ForEach(BasketFamily.allCases) { family in
-                        familyButton(family)
-                    }
-                }
-            } else {
-                HStack(spacing: 10) {
-                    ForEach(BasketFamily.allCases) { family in
-                        familyButton(family)
-                    }
-                }
-            }
-        }
-    }
-
-    private func familyButton(_ family: BasketFamily) -> some View {
-        let compatible = RescueEngine.isCompatible(family, with: encounter.species)
-        return Button {
-            selectFamily(family)
+        Button {
+            showsBasketSheet = true
         } label: {
-            VStack(spacing: 4) {
-                ZStack(alignment: .topTrailing) {
-                    Text(family.symbol)
-                        .font(.system(size: 26))
-                        .frame(width: 52, height: 52)
-                        .background(compatible ? SanctuaryTheme.lime.opacity(0.18) : .white.opacity(0.05), in: Circle())
-                        .overlay(
-                            Circle().stroke(compatible ? SanctuaryTheme.lime : .white.opacity(0.1), lineWidth: compatible ? 2 : 1)
-                        )
+            HStack(spacing: 12) {
+                Image(encounter.species.family.imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
 
-                    if !compatible {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(4)
-                            .background(.black.opacity(0.55), in: Circle())
-                            .offset(x: 4, y: -4)
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(encounter.species.family.basketName(tier: encounter.selectedTier))
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(currentStock) restantes")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
-                Text(family.shortTitle)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .foregroundStyle(compatible ? SanctuaryTheme.cream : .secondary)
-            }
-            .opacity(compatible ? 1 : 0.55)
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(family.title)
-        .accessibilityHint(compatible ? "Cesta selecionada" : "Incompatível com \(encounter.species.displayName)")
-    }
+                Spacer(minLength: 8)
 
-    private func selectFamily(_ family: BasketFamily) {
-        guard RescueEngine.isCompatible(family, with: encounter.species) else {
-            showWarning("\(encounter.species.displayName) aceita \(encounter.species.family.title).")
-            return
-        }
-        // Já é a família selecionada por padrão: nada muda, nenhuma cesta é consumida.
-    }
-
-    private var tiersRow: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 8) {
-                    ForEach([1, 2, 3], id: \.self) { tier in
-                        tierSlot(tier)
-                    }
-                }
-            } else {
-                HStack(spacing: 10) {
-                    ForEach([1, 2, 3], id: \.self) { tier in
-                        tierSlot(tier)
-                    }
-                }
-            }
-        }
-    }
-
-    private func tierSlot(_ tier: Int) -> some View {
-        let remaining = encounter.stock[tier, default: 0]
-        let selected = encounter.selectedTier == tier
-        let disabled = remaining == 0
-        return Button {
-            encounter.selectedTier = tier
-            SanctuaryHaptics.selection()
-        } label: {
-            VStack(spacing: 4) {
-                Text(encounter.species.family.basketName(tier: tier))
-                    .font(.caption2.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
-                    .foregroundStyle(SanctuaryTheme.cream)
-                Text("\(remaining) restantes")
-                    .font(.caption2)
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.bold())
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-            .background(.white.opacity(selected ? 0.14 : 0.06), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(selected ? SanctuaryTheme.lime : .white.opacity(0.08), lineWidth: selected ? 2 : 1)
-            )
-            .opacity(disabled ? 0.4 : 1)
+            .padding(.horizontal, 14)
         }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .accessibilityLabel("\(encounter.species.family.basketName(tier: tier)), \(remaining) restantes")
+        .buttonStyle(SoftActionButtonStyle())
+        .disabled(isThrowInFlight || encounterEnded)
+        .accessibilityLabel("Cesta selecionada: \(encounter.species.family.basketName(tier: encounter.selectedTier)), \(currentStock) restantes")
+        .accessibilityHint("Toque para escolher outra cesta")
+        .sheet(isPresented: $showsBasketSheet) {
+            BasketSheet(species: encounter.species, stock: encounter.stock, selectedTier: $encounter.selectedTier)
+        }
+    }
+
+    private var currentStock: Int {
+        encounter.stock[encounter.selectedTier, default: 0]
     }
 
     private func showWarning(_ text: String) {
@@ -804,6 +724,110 @@ struct RescueLabSheet: View {
                 }
             }
         )
+    }
+}
+
+// MARK: - Hub de cestas
+
+/// Lista as nove cestas agrupadas por família, no formato do Pokémon GO. Só a família
+/// compatível com `species` é selecionável — a incompatibilidade fica na regra
+/// (`RescueEngine.isCompatible`), não decidida aqui.
+struct BasketSheet: View {
+    let species: RescueSpecies
+    let stock: [Int: Int]
+    @Binding var selectedTier: Int
+    @Environment(\.dismiss) private var dismiss
+
+    private let tiers = [1, 2, 3]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(BasketFamily.allCases) { family in
+                    Section(family.title) {
+                        ForEach(tiers, id: \.self) { tier in
+                            row(family: family, tier: tier)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Cestas")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Fechar") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func row(family: BasketFamily, tier: Int) -> some View {
+        let compatible = RescueEngine.isCompatible(family, with: species)
+        let remaining = stock[tier, default: 0]
+        let outOfStock = compatible && remaining <= 0
+        let selectable = compatible && !outOfStock
+        let selected = compatible && selectedTier == tier
+        let reason: String? = !compatible
+            ? "\(species.displayName) não come isto"
+            : (outOfStock ? "sem estoque" : nil)
+
+        return Button {
+            selectedTier = tier
+            SanctuaryHaptics.selection()
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                Image(family.imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(family.basketName(tier: tier))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(selectable ? SanctuaryTheme.cream : .secondary)
+                    if let reason {
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(SanctuaryTheme.lime)
+                        .accessibilityHidden(true)
+                } else if compatible {
+                    Text("\(remaining)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .opacity(selectable ? 1 : 0.5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!selectable)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel(family: family, tier: tier, remaining: remaining, reason: reason, selected: selected))
+    }
+
+    private func accessibilityLabel(family: BasketFamily, tier: Int, remaining: Int, reason: String?, selected: Bool) -> String {
+        var parts = [family.basketName(tier: tier)]
+        if let reason {
+            parts.append(reason)
+        } else {
+            parts.append("\(remaining) restantes")
+        }
+        if selected {
+            parts.append("selecionada")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 

@@ -39,19 +39,12 @@ enum BasketFamily: String, CaseIterable, Identifiable {
         }
     }
 
-    var shortTitle: String {
+    // Arte temporária — foto quadrada com fundo, ainda sem recorte por espécie.
+    var imageName: String {
         switch self {
-        case .carnivore: "Carnívora"
-        case .herbivore: "Herbívora"
-        case .invertebrate: "Invertebrados"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .carnivore: "🥩"
-        case .herbivore: "🍇"
-        case .invertebrate: "🐛"
+        case .carnivore: "cesta-carnes"
+        case .herbivore: "cesta-frutas"
+        case .invertebrate: "cesta-invertebrados"
         }
     }
 
