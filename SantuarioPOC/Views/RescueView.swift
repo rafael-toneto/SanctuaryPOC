@@ -19,6 +19,7 @@ struct Encounter {
 struct RescueView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var balance = RescueBalance.poc
     @State private var encounter = Encounter.random(balance: .poc)
@@ -26,6 +27,14 @@ struct RescueView: View {
     @State private var showsLab = false
     @State private var showsBasketSheet = false
     @StateObject private var weather = WeatherProvider()
+
+    // Moita: índices das folhas ainda presentes. Vazio = animal revelado (fase 2 liberada).
+    // Contagem e limiar são apresentação (Artigo 5), não regra — por isso ficam aqui, fora de
+    // `RescueBalance`.
+    private static let bushLeafCount = 24
+    private static let bushRevealThreshold = 6
+    private static let bushSize = CGSize(width: 210, height: 190)
+    @State private var remainingLeaves: Set<Int> = Set(0..<RescueView.bushLeafCount)
 
     // Distância entre estes dois pontos julga o arremesso; ambos em .named("rescueArena").
     @State private var targetCenter: CGPoint = .zero
@@ -102,7 +111,8 @@ struct RescueView: View {
     }
 
     private var canThrow: Bool {
-        !isThrowInFlight && !encounterEnded && encounter.stock[encounter.selectedTier, default: 0] > 0
+        !isThrowInFlight && !encounterEnded && animalRevealed
+            && encounter.stock[encounter.selectedTier, default: 0] > 0
     }
 
     private var endedCard: some View {
@@ -136,6 +146,7 @@ struct RescueView: View {
         encounter = .random(balance: balance)
         dragTranslation = .zero
         message = nil
+        remainingLeaves = Set(0..<Self.bushLeafCount)
     }
 
     // MARK: - Topo
@@ -282,6 +293,7 @@ struct RescueView: View {
     /// desvio. `throwVector: .zero` zera o termo da chuva (guarda em `WeatherEngine.landing`),
     /// então isto mostra só o vento, que é o que a faixa de clima promete.
     private var windGhostLanding: CGPoint? {
+        guard animalRevealed else { return nil }
         guard weather.conditions.windSpeedKmh > 0 else { return nil }
         return WeatherEngine.landing(
             aimed: targetCenter, throwVector: .zero,
@@ -298,6 +310,105 @@ struct RescueView: View {
 
             targetRing
         }
+        // Overlay, não fluxo do VStack: a moita não pode deslocar nem redimensionar o emoji
+        // ou o targetRing — captureCenter(into: $targetCenter) depende desse layout intacto.
+        .overlay(alignment: .top) {
+            if !animalRevealed {
+                bushOverlay
+            }
+        }
+    }
+
+    // MARK: - Moita
+
+    private var animalRevealed: Bool {
+        remainingLeaves.isEmpty
+    }
+
+    private var bushOverlay: some View {
+        ZStack {
+            ForEach(0..<Self.bushLeafCount, id: \.self) { index in
+                if remainingLeaves.contains(index) {
+                    leafShape(index)
+                        .position(leafPosition(index))
+                        .transition(bushFallTransition)
+                }
+            }
+        }
+        .frame(width: Self.bushSize.width, height: Self.bushSize.height)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in removeLeaves(near: value.location) }
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Moita escondendo o \(encounter.species.displayName). Toque duas vezes para afastar.")
+        .accessibilityAction { revealBush() }
+    }
+
+    private var bushFallTransition: AnyTransition {
+        reduceMotion ? .opacity : .offset(y: 40).combined(with: .opacity)
+    }
+
+    private var bushAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.7)
+    }
+
+    private func leafShape(_ index: Int) -> some View {
+        let color = index % 3 == 0 ? SanctuaryTheme.lime : SanctuaryTheme.forest
+        return Group {
+            if index % 2 == 0 {
+                Capsule().fill(color)
+            } else {
+                Ellipse().fill(color)
+            }
+        }
+        .frame(width: 26, height: 14)
+        .rotationEffect(.degrees(leafRotation(index)))
+    }
+
+    /// Posição determinística por índice — espiral por ângulo áureo, não `random` (senão as
+    /// folhas trocariam de lugar a cada redesenho).
+    private func leafPosition(_ index: Int) -> CGPoint {
+        let goldenAngle = 137.508 * Double.pi / 180
+        let maxRadius = min(Self.bushSize.width, Self.bushSize.height) / 2 - 12
+        let t = Double(index) / Double(Self.bushLeafCount)
+        let r = maxRadius * t.squareRoot()
+        let theta = Double(index) * goldenAngle
+        return CGPoint(
+            x: Self.bushSize.width / 2 + r * cos(theta),
+            y: Self.bushSize.height / 2 + r * sin(theta) * 0.85
+        )
+    }
+
+    private func leafRotation(_ index: Int) -> Double {
+        Double((index * 53) % 360)
+    }
+
+    private func removeLeaves(near point: CGPoint) {
+        guard !animalRevealed else { return }
+        let removalRadius: Double = 30
+        let hit = remainingLeaves.filter { index in
+            let leaf = leafPosition(index)
+            return hypot(leaf.x - point.x, leaf.y - point.y) <= removalRadius
+        }
+        guard !hit.isEmpty else { return }
+
+        withAnimation(bushAnimation) {
+            remainingLeaves.subtract(hit)
+            if !remainingLeaves.isEmpty && remainingLeaves.count < Self.bushRevealThreshold {
+                remainingLeaves.removeAll()
+            }
+        }
+        SanctuaryHaptics.selection()
+    }
+
+    private func revealBush() {
+        guard !animalRevealed else { return }
+        withAnimation(bushAnimation) {
+            remainingLeaves.removeAll()
+        }
+        SanctuaryHaptics.selection()
     }
 
     private var targetRing: some View {

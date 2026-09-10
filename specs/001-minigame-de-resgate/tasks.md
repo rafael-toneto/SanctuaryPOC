@@ -9,9 +9,9 @@ T001 → T002 → T003 → T004 → (T005 [P] ‖ T006 [P])   ✅ entregues
 
 **Extensão 2 — clima, hub de cestas e perspectiva:**
 
-T007 → T008 → T009 → T010 → T011
+T007 → T008 → T009 → T010 → T012 → T011
 
-Nenhuma é `[P]`: T008–T011 tocam todas o mesmo `RescueView.swift`. Se a capability do
+Nenhuma é `[P]`: T008–T012 tocam todas o mesmo `RescueView.swift`. Se a capability do
 WeatherKit atrasar T007, puxe **T010 para a frente** — ela não depende de clima.
 
 ---
@@ -657,10 +657,76 @@ São **provisórios** — arte final por cesta é acabamento e segue fora de esc
 
 ---
 
+### T012 — Moita: revelar o animal raspando antes do arremesso
+
+- **Agente:** `task-implementer`
+- **Depende de:** T010
+- **Paralelizável:** não
+- **Nota de numeração:** entrou depois de T011 ser escrita, por isso o número é maior. A ordem
+  de execução manda: **T012 vem antes de T011.**
+
+**Objetivo:** o encontro passa a ter duas fases. O animal começa parcialmente escondido atrás
+de uma moita; o jogador raspa a moita com o dedo até ela perder as folhas, o animal aparece, e
+só então o estilingue funciona.
+
+**Arquivos:**
+- `SantuarioPOC/Views/RescueView.swift` — alterar
+
+**Comportamento:**
+- Estado novo em `RescueView`: as folhas ainda presentes e um booleano derivado
+  `animalRevealed`. `startNewEncounter()` repõe a moita cheia.
+- Fase 1 — moita: um bloco de folhas cobre o emoji do animal e **parte** do alvo, deixando um
+  pedaço do animal à mostra (é "parcialmente atrás", não invisível).
+- O gesto é um arraste contínuo (`DragGesture(minimumDistance: 0)`) sobre a área da moita: cada
+  `onChanged` remove as folhas dentro de um raio pequeno do dedo. Folha removida cai e some.
+- Quando restar menos que o limiar de folhas, o resto cai junto e a fase 2 começa. Não exija
+  raspar 100 % — ninguém termina uma raspadinha inteira.
+- Fase 2 — o que já existe hoje, sem nenhuma mudança de regra.
+- Háptico: `SanctuaryHaptics.selection()` a cada lote de folhas removido, não a cada folha —
+  senão vira zumbido. `StretchHaptics` continua exclusivo do estilingue.
+
+**Como desenhar as folhas (o degrau mais baixo que resolve):**
+- Views SwiftUI comuns, ~20–30 folhas, `Ellipse` ou `Capsule` em tons já existentes de
+  `SanctuaryTheme` (`forest`, `lime`), com rotação por índice. Nada de `Canvas`, nada de
+  partícula, nada de imagem nova.
+- Posição de cada folha vem de uma **fórmula** com o índice (espiral por ângulo áureo, ou
+  grade com deslocamento por `sin`), não de `random`. Layout aleatório re-sorteia a cada
+  redesenho e as folhas piscam de lugar.
+- Queda da folha: `.transition(.offset(y:).combined(with: .opacity))` com `withAnimation`.
+
+**A trava é uma só:**
+- `canThrow` ganha `&& animalRevealed`. É o único ponto que já governa o gesto do estilingue,
+  a prévia e o consumo de estoque — não espalhe `if` por outras views.
+- O hub de cestas, o laboratório e o botão de fechar continuam funcionando durante a fase 1.
+
+**Acessibilidade (não é opcional):**
+- Raspar não existe para VoiceOver. A moita é **um** elemento acessível, rotulada
+  `"Moita escondendo o \(species.displayName). Toque duas vezes para afastar."`, com ação que
+  revela tudo de uma vez. Sem isso a tela fica intransponível com VoiceOver ligado.
+- Com Reduzir Movimento, a queda das folhas vira fade — sem deslocamento.
+
+**Não faça:**
+- Não toque em `RescueModels.swift`. Contagem de folhas e limiar de revelação são apresentação,
+  não regra: ficam como `private let` na view, fora de `RescueBalance`.
+- Não mexa em `WeatherEngine`, `targetSquash`, `throwSensitivity` nem na resolução do arremesso.
+- Não adicione dependência, SpriteKit, SceneKit nem `TimelineView`.
+- Não gaste cesta, nem deixe o clima empurrar nada, durante a fase 1.
+- Nenhuma cor nova fora de `SanctuaryTheme`.
+
+**Critério de aceitação:**
+- Ao abrir o encontro, o animal aparece parcialmente coberto e puxar o estilingue não arremessa.
+- Arrastar o dedo sobre a moita tira folhas na trilha do dedo, e não em bloco.
+- Passado o limiar, o resto cai, o animal fica inteiro e o arremesso volta a funcionar.
+- "Encontrar outro animal" traz a moita cheia de novo.
+- Com VoiceOver, a moita é um elemento só e a ação dupla revela o animal.
+- Todos os critérios de T004, T008, T009 e T010 continuam passando.
+
+---
+
 ### T011 — Perspectiva e acabamento visual do encontro
 
 - **Agente:** `task-implementer`
-- **Depende de:** T009, T010, **e do arquivo do Figma** (o dono do repo está montando)
+- **Depende de:** T009, T010, T012, **e do arquivo do Figma** (o dono do repo está montando)
 - **Paralelizável:** não
 - **Status:** 🚧 **bloqueada** — não comece sem o link do Figma
 
@@ -692,8 +758,8 @@ parecer chão, seguindo o beta que vier do Figma.
 **Não faça:**
 - Não adicione SpriteKit, SceneKit, Lottie, Rive nem qualquer dependência. É SwiftUI.
 - Não troque emoji por arte final: ilustração por espécie segue fora de escopo.
-- Não recrie o hub de cestas de T010 do zero porque o Figma desenhou diferente — ajuste o
-  visual, preserve o comportamento aceito.
+- Não recrie o hub de cestas de T010 nem a moita de T012 do zero porque o Figma desenhou
+  diferente — ajuste o visual, preserve o comportamento aceito.
 
 **Critério de aceitação:**
 - A tela se parece com o beta do Figma nas proporções e no enquadramento.
