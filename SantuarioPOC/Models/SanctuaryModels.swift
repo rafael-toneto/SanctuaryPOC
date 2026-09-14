@@ -240,7 +240,7 @@ struct Terrain: Identifiable, Codable, Equatable {
 }
 
 struct SanctuaryState: Codable, Equatable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int
     var wallet: Double
@@ -249,9 +249,6 @@ struct SanctuaryState: Codable, Equatable {
 
     static func demo(at now: Date, config: BalanceConfig = .poc) -> SanctuaryState {
         let grasslandID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
-        let forestID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
-        let wetlandID = UUID(uuidString: "00000000-0000-0000-0000-000000000103")!
-        let aquaticID = UUID(uuidString: "00000000-0000-0000-0000-000000000104")!
 
         let terrains = [
             Terrain(
@@ -262,33 +259,6 @@ struct SanctuaryState: Codable, Equatable {
                 lastSettledAt: now,
                 upgradeLevels: [:],
                 mapSlot: 0
-            ),
-            Terrain(
-                id: forestID,
-                biome: .forest,
-                isUnlocked: true,
-                storedResources: 0,
-                lastSettledAt: now,
-                upgradeLevels: [:],
-                mapSlot: 1
-            ),
-            Terrain(
-                id: wetlandID,
-                biome: .wetland,
-                isUnlocked: true,
-                storedResources: 9,
-                lastSettledAt: now,
-                upgradeLevels: [:],
-                mapSlot: 2
-            ),
-            Terrain(
-                id: aquaticID,
-                biome: .aquatic,
-                isUnlocked: false,
-                storedResources: 0,
-                lastSettledAt: now,
-                upgradeLevels: [:],
-                mapSlot: 3
             )
         ]
 
@@ -297,19 +267,7 @@ struct SanctuaryState: Codable, Equatable {
             AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
             AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
             AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
-            AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID)),
-
-            // Forest (4 animals)
-            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
-            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
-            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
-            AnimalInstance(id: UUID(), speciesID: "mico-leao-demo", location: .terrain(forestID)),
-
-            // Wetland (4 animals)
-            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID)),
-            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID)),
-            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID)),
-            AnimalInstance(id: UUID(), speciesID: "jacare-demo", location: .terrain(wetlandID))
+            AnimalInstance(id: UUID(), speciesID: "lobo-guara-demo", location: .terrain(grasslandID))
         ]
 
         return SanctuaryState(
