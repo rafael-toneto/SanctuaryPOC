@@ -3,6 +3,8 @@ import SwiftUI
 
 @MainActor
 final class RescueViewModel: ObservableObject {
+    @ObservedObject var store: SanctuaryStore
+
     @Published var balance = RescueBalance.poc
     @Published var encounter = Encounter.random(balance: .poc)
     @Published var message: SanctuaryNotice?
@@ -45,7 +47,8 @@ final class RescueViewModel: ObservableObject {
     // que a View não observa mais `weather` diretamente.
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
+    init(store: SanctuaryStore) {
+        self.store = store
         weather.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
@@ -245,8 +248,19 @@ final class RescueViewModel: ObservableObject {
         switch outcome {
         case .rescued:
             encounter.outcome = .rescued
-            SanctuaryHaptics.success()
-            message = SanctuaryNotice(message: "\(species.displayName) foi resgatado.", kind: .success)
+            switch store.acolher(speciesID: species.id) {
+            case .success:
+                SanctuaryHaptics.success()
+                message = SanctuaryNotice(
+                    message: "\(species.displayName) foi resgatado e foi para o acolhimento.",
+                    kind: .success
+                )
+            case let .failure(error):
+                message = SanctuaryNotice(
+                    message: "\(species.displayName) foi resgatado, mas não pôde ser registrado no acolhimento: \(error.localizedDescription)",
+                    kind: .warning
+                )
+            }
         case .fled:
             encounter.outcome = .fled
             message = SanctuaryNotice(message: "\(species.displayName) fugiu.", kind: .warning)

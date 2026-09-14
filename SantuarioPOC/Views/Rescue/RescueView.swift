@@ -21,7 +21,11 @@ struct RescueView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @StateObject private var viewModel = RescueViewModel()
+    @StateObject private var viewModel: RescueViewModel
+
+    init(store: SanctuaryStore) {
+        _viewModel = StateObject(wrappedValue: RescueViewModel(store: store))
+    }
 
     var body: some View {
         ZStack {
@@ -92,6 +96,14 @@ struct RescueView: View {
                 Text("Encontrar outro animal")
             }
             .buttonStyle(FilledActionButtonStyle())
+
+            Button {
+                dismiss()
+            } label: {
+                Text("Ir ao santuário")
+            }
+            .buttonStyle(SoftActionButtonStyle())
+            .accessibilityLabel("Ir ao santuário")
         }
         .padding(24)
         .frame(maxWidth: 320)
@@ -706,5 +718,11 @@ struct BasketSheet: View {
 }
 
 #Preview {
-    RescueView()
+    RescueView(store: SanctuaryStore(persistence: RescuePreviewPersistence()))
+}
+
+private final class RescuePreviewPersistence: SanctuaryPersisting {
+    func load() -> SanctuaryState? { nil }
+    func save(_ state: SanctuaryState) {}
+    func clear() {}
 }
