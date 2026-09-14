@@ -21,35 +21,7 @@ struct RescueView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var balance = RescueBalance.poc
-    @State private var encounter = Encounter.random(balance: .poc)
-    @State private var message: SanctuaryNotice?
-    @State private var showsLab = false
-    @State private var showsBasketSheet = false
-    @StateObject private var weather = WeatherProvider()
-
-    // Moita: índices das folhas ainda presentes. Vazio = animal revelado (fase 2 liberada).
-    // Contagem e limiar são apresentação (Artigo 5), não regra — por isso ficam aqui, fora de
-    // `RescueBalance`.
-    private static let bushLeafCount = 24
-    private static let bushRevealThreshold = 6
-    private static let bushSize = CGSize(width: 210, height: 190)
-    @State private var remainingLeaves: Set<Int> = Set(0..<RescueView.bushLeafCount)
-
-    // Distância entre estes dois pontos julga o arremesso; ambos em .named("rescueArena").
-    @State private var targetCenter: CGPoint = .zero
-    @State private var basketCenter: CGPoint = .zero
-
-    // Puxada em andamento (segue o dedo) ou deslocamento animado do arremesso em voo.
-    @State private var dragTranslation: CGSize = .zero
-    @State private var isThrowInFlight = false
-
-    // Mesmo achatamento usado para desenhar o alvo e para julgar a distância — uma conta só.
-    private let targetSquash: Double = 0.45
-
-    // Puxada considerada "corda no limite" para o háptico. Não limita o arremesso.
-    private let maxPull: Double = 150
-    private let stretchHaptics = StretchHaptics()
+    @StateObject private var viewModel = RescueViewModel()
 
     var body: some View {
         ZStack {
@@ -70,54 +42,41 @@ struct RescueView: View {
         }
         .coordinateSpace(name: "rescueArena")
         .overlay {
-            if let windGhostLanding {
+            if let windGhostLanding = viewModel.windGhostLanding {
                 Ellipse()
                     .stroke(SanctuaryTheme.lime.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .frame(width: balance.hitRadius * 2, height: balance.hitRadius * 2 * targetSquash)
+                    .frame(width: viewModel.balance.hitRadius * 2, height: viewModel.balance.hitRadius * 2 * viewModel.targetSquash)
                     .position(windGhostLanding)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
         }
-        .task { await weather.refresh() }
+        .task { await viewModel.weather.refresh() }
         .overlay(alignment: .bottom) {
-            if let message, !encounterEnded {
+            if let message = viewModel.message, !viewModel.encounterEnded {
                 NoticeBanner(notice: message)
                     .padding(.bottom, 210)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay {
-            if encounterEnded {
+            if viewModel.encounterEnded {
                 endedCard
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: message)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: encounterEnded)
-        .sheet(isPresented: $showsLab) {
-            RescueLabSheet(balance: $balance, weather: weather, rollNewAnimal: startNewEncounter)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: viewModel.message)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: viewModel.encounterEnded)
+        .sheet(isPresented: $viewModel.showsLab) {
+            RescueLabSheet(balance: $viewModel.balance, weather: viewModel.weather, rollNewAnimal: viewModel.startNewEncounter)
         }
     }
 
     // MARK: - Fim de encontro
 
-    private var stockDepleted: Bool {
-        encounter.stock.values.allSatisfy { $0 <= 0 }
-    }
-
-    private var encounterEnded: Bool {
-        encounter.outcome != nil || stockDepleted
-    }
-
-    private var canThrow: Bool {
-        !isThrowInFlight && !encounterEnded && animalRevealed
-            && encounter.stock[encounter.selectedTier, default: 0] > 0
-    }
-
     private var endedCard: some View {
         VStack(spacing: 16) {
-            if let message {
+            if let message = viewModel.message {
                 Label(
                     message.message,
                     systemImage: message.kind == .success ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
@@ -128,7 +87,7 @@ struct RescueView: View {
             }
 
             Button {
-                startNewEncounter()
+                viewModel.startNewEncounter()
             } label: {
                 Text("Encontrar outro animal")
             }
@@ -140,13 +99,6 @@ struct RescueView: View {
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.1)))
         .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
         .padding(24)
-    }
-
-    private func startNewEncounter() {
-        encounter = .random(balance: balance)
-        dragTranslation = .zero
-        message = nil
-        remainingLeaves = Set(0..<Self.bushLeafCount)
     }
 
     // MARK: - Topo
@@ -178,50 +130,16 @@ struct RescueView: View {
 
     // MARK: - Clima
 
-    // Cortes de velocidade só para a cor da seta — apresentação, não regra (Artigo 5).
-    private let calmWindThreshold: Double = 1
-    private let strongWindThreshold: Double = 30
-
-    private var windColor: Color {
-        let speed = weather.conditions.windSpeedKmh
-        if speed < calmWindThreshold { return .secondary }
-        if speed >= strongWindThreshold { return SanctuaryTheme.warning }
-        return SanctuaryTheme.lime
-    }
-
-    private var windDirectionPhrase: String {
-        let degrees = WeatherEngine.windPushDegrees(weather.conditions)
-        let sector = Int((degrees / 45).rounded()) % 8
-        return switch sector {
-        case 0: "para cima"
-        case 1: "para cima e para a direita"
-        case 2: "para a direita"
-        case 3: "para baixo e para a direita"
-        case 4: "para baixo"
-        case 5: "para baixo e para a esquerda"
-        case 6: "para a esquerda"
-        default: "para cima e para a esquerda"
-        }
-    }
-
-    private var weatherAccessibilityLabel: String {
-        let speed = Int(weather.conditions.windSpeedKmh.rounded())
-        let windPart = speed < 1
-            ? "Vento parado."
-            : "Vento de \(speed) quilômetros por hora, soprando \(windDirectionPhrase)."
-        return "\(windPart) \(weather.conditions.sky.title)."
-    }
-
     private var weatherStrip: some View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.up")
                 .font(.subheadline.bold())
-                .foregroundStyle(windColor)
-                .rotationEffect(.degrees(WeatherEngine.windPushDegrees(weather.conditions)))
-            Text("\(Int(weather.conditions.windSpeedKmh.rounded())) km/h")
+                .foregroundStyle(viewModel.windColor)
+                .rotationEffect(.degrees(WeatherEngine.windPushDegrees(viewModel.weather.conditions)))
+            Text("\(Int(viewModel.weather.conditions.windSpeedKmh.rounded())) km/h")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(SanctuaryTheme.cream)
-            Image(systemName: weather.conditions.sky.symbol)
+            Image(systemName: viewModel.weather.conditions.sky.symbol)
                 .font(.caption)
                 .foregroundStyle(SanctuaryTheme.cream)
         }
@@ -231,7 +149,7 @@ struct RescueView: View {
         .overlay(Capsule().stroke(.white.opacity(0.1)))
         .fixedSize()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(weatherAccessibilityLabel)
+        .accessibilityLabel(viewModel.weatherAccessibilityLabel)
     }
 
     private var closeButton: some View {
@@ -250,7 +168,7 @@ struct RescueView: View {
 
     private var labButton: some View {
         Button {
-            showsLab = true
+            viewModel.showsLab = true
         } label: {
             Image(systemName: "flask.fill")
                 .font(.headline.bold())
@@ -263,7 +181,7 @@ struct RescueView: View {
     }
 
     private var speciesName: some View {
-        Text(encounter.species.displayName.uppercased())
+        Text(viewModel.encounter.species.displayName.uppercased())
             .font(.subheadline.bold())
             .tracking(1.0)
             .foregroundStyle(SanctuaryTheme.cream)
@@ -274,9 +192,9 @@ struct RescueView: View {
 
     private var rarityBadge: some View {
         HStack(spacing: 6) {
-            Text(encounter.species.rarity.letter)
+            Text(viewModel.encounter.species.rarity.letter)
                 .font(.caption.bold())
-            Text(encounter.species.rarity.title)
+            Text(viewModel.encounter.species.rarity.title)
                 .font(.caption2)
         }
         .foregroundStyle(SanctuaryTheme.ink)
@@ -289,21 +207,9 @@ struct RescueView: View {
 
     // MARK: - Animal e alvo
 
-    /// Onde cairia um arremesso mirado no centro do alvo, com o clima atual — a prévia do
-    /// desvio. `throwVector: .zero` zera o termo da chuva (guarda em `WeatherEngine.landing`),
-    /// então isto mostra só o vento, que é o que a faixa de clima promete.
-    private var windGhostLanding: CGPoint? {
-        guard animalRevealed else { return nil }
-        guard weather.conditions.windSpeedKmh > 0 else { return nil }
-        return WeatherEngine.landing(
-            aimed: targetCenter, throwVector: .zero,
-            conditions: weather.conditions, balance: balance, squash: targetSquash
-        )
-    }
-
     private var animalAndTarget: some View {
         VStack(spacing: -14) {
-            Text(encounter.species.symbol)
+            Text(viewModel.encounter.species.symbol)
                 .font(.system(size: 110))
                 .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
                 .accessibilityHidden(true)
@@ -311,9 +217,9 @@ struct RescueView: View {
             targetRing
         }
         // Overlay, não fluxo do VStack: a moita não pode deslocar nem redimensionar o emoji
-        // ou o targetRing — captureCenter(into: $targetCenter) depende desse layout intacto.
+        // ou o targetRing — captureCenter(into: $viewModel.targetCenter) depende desse layout intacto.
         .overlay(alignment: .top) {
-            if !animalRevealed {
+            if !viewModel.animalRevealed {
                 bushOverlay
             }
         }
@@ -321,29 +227,25 @@ struct RescueView: View {
 
     // MARK: - Moita
 
-    private var animalRevealed: Bool {
-        remainingLeaves.isEmpty
-    }
-
     private var bushOverlay: some View {
         ZStack {
-            ForEach(0..<Self.bushLeafCount, id: \.self) { index in
-                if remainingLeaves.contains(index) {
+            ForEach(0..<RescueViewModel.bushLeafCount, id: \.self) { index in
+                if viewModel.remainingLeaves.contains(index) {
                     leafShape(index)
-                        .position(leafPosition(index))
+                        .position(viewModel.leafPosition(index))
                         .transition(bushFallTransition)
                 }
             }
         }
-        .frame(width: Self.bushSize.width, height: Self.bushSize.height)
+        .frame(width: RescueViewModel.bushSize.width, height: RescueViewModel.bushSize.height)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
-                .onChanged { value in removeLeaves(near: value.location) }
+                .onChanged { value in viewModel.removeLeaves(near: value.location, animation: bushAnimation) }
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Moita escondendo o \(encounter.species.displayName). Toque duas vezes para afastar.")
-        .accessibilityAction { revealBush() }
+        .accessibilityLabel("Moita escondendo o \(viewModel.encounter.species.displayName). Toque duas vezes para afastar.")
+        .accessibilityAction { viewModel.revealBush(animation: bushAnimation) }
     }
 
     private var bushFallTransition: AnyTransition {
@@ -367,66 +269,26 @@ struct RescueView: View {
         .rotationEffect(.degrees(leafRotation(index)))
     }
 
-    /// Posição determinística por índice — espiral por ângulo áureo, não `random` (senão as
-    /// folhas trocariam de lugar a cada redesenho).
-    private func leafPosition(_ index: Int) -> CGPoint {
-        let goldenAngle = 137.508 * Double.pi / 180
-        let maxRadius = min(Self.bushSize.width, Self.bushSize.height) / 2 - 12
-        let t = Double(index) / Double(Self.bushLeafCount)
-        let r = maxRadius * t.squareRoot()
-        let theta = Double(index) * goldenAngle
-        return CGPoint(
-            x: Self.bushSize.width / 2 + r * cos(theta),
-            y: Self.bushSize.height / 2 + r * sin(theta) * 0.85
-        )
-    }
-
     private func leafRotation(_ index: Int) -> Double {
         Double((index * 53) % 360)
-    }
-
-    private func removeLeaves(near point: CGPoint) {
-        guard !animalRevealed else { return }
-        let removalRadius: Double = 30
-        let hit = remainingLeaves.filter { index in
-            let leaf = leafPosition(index)
-            return hypot(leaf.x - point.x, leaf.y - point.y) <= removalRadius
-        }
-        guard !hit.isEmpty else { return }
-
-        withAnimation(bushAnimation) {
-            remainingLeaves.subtract(hit)
-            if !remainingLeaves.isEmpty && remainingLeaves.count < Self.bushRevealThreshold {
-                remainingLeaves.removeAll()
-            }
-        }
-        SanctuaryHaptics.selection()
-    }
-
-    private func revealBush() {
-        guard !animalRevealed else { return }
-        withAnimation(bushAnimation) {
-            remainingLeaves.removeAll()
-        }
-        SanctuaryHaptics.selection()
     }
 
     private var targetRing: some View {
         ZStack {
             Ellipse()
                 .fill(SanctuaryTheme.lime.opacity(0.14))
-                .frame(width: balance.hitRadius * 2, height: balance.hitRadius * 2 * targetSquash)
+                .frame(width: viewModel.balance.hitRadius * 2, height: viewModel.balance.hitRadius * 2 * viewModel.targetSquash)
             Ellipse()
                 .stroke(SanctuaryTheme.lime, lineWidth: 2)
-                .frame(width: balance.hitRadius * 2, height: balance.hitRadius * 2 * targetSquash)
+                .frame(width: viewModel.balance.hitRadius * 2, height: viewModel.balance.hitRadius * 2 * viewModel.targetSquash)
             Ellipse()
                 .fill(SanctuaryTheme.lime.opacity(0.30))
-                .frame(width: balance.coreRadius * 2, height: balance.coreRadius * 2 * targetSquash)
+                .frame(width: viewModel.balance.coreRadius * 2, height: viewModel.balance.coreRadius * 2 * viewModel.targetSquash)
             Ellipse()
                 .stroke(SanctuaryTheme.lime, lineWidth: 1.5)
-                .frame(width: balance.coreRadius * 2, height: balance.coreRadius * 2 * targetSquash)
+                .frame(width: viewModel.balance.coreRadius * 2, height: viewModel.balance.coreRadius * 2 * viewModel.targetSquash)
         }
-        .background(captureCenter(into: $targetCenter))
+        .background(captureCenter(into: $viewModel.targetCenter))
         .accessibilityHidden(true)
     }
 
@@ -452,8 +314,8 @@ struct RescueView: View {
 
                 basket
                     .offset(y: -46)
-                    .offset(dragTranslation)
-                    .allowsHitTesting(canThrow)
+                    .offset(viewModel.dragTranslation)
+                    .allowsHitTesting(viewModel.canThrow)
                     .gesture(throwGesture)
             }
             .frame(height: 110)
@@ -468,7 +330,7 @@ struct RescueView: View {
     private var basketAnchor: some View {
         Color.clear
             .frame(width: 64, height: 64)
-            .background(captureCenter(into: $basketCenter))
+            .background(captureCenter(into: $viewModel.basketCenter))
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
@@ -479,7 +341,7 @@ struct RescueView: View {
                 .fill(SanctuaryTheme.forest)
                 .frame(width: 64, height: 64)
                 .overlay(Circle().stroke(SanctuaryTheme.lime, lineWidth: 2))
-            Image(encounter.species.family.imageName)
+            Image(viewModel.encounter.species.family.imageName)
                 .resizable()
                 .scaledToFit()
                 .frame(width: 40, height: 40)
@@ -491,95 +353,8 @@ struct RescueView: View {
 
     private var throwGesture: some Gesture {
         DragGesture(coordinateSpace: .named("rescueArena"))
-            .onChanged { value in
-                guard canThrow else { return }
-                dragTranslation = value.translation
-                let pull = hypot(value.translation.width, value.translation.height)
-                stretchHaptics.update(progress: pull / maxPull)
-            }
-            .onEnded { value in
-                guard canThrow else { return }
-                stretchHaptics.release()
-                let translation = value.translation
-                let aimedLanding = CGPoint(
-                    x: basketCenter.x - translation.width * balance.throwSensitivity,
-                    y: basketCenter.y - translation.height * balance.throwSensitivity
-                )
-                let throwVector = CGVector(
-                    dx: -translation.width * balance.throwSensitivity,
-                    dy: -translation.height * balance.throwSensitivity
-                )
-                let conditions = weather.conditions
-                var windOnlyConditions = conditions
-                windOnlyConditions.rainIntensity = 0
-
-                let windLanding = WeatherEngine.landing(
-                    aimed: aimedLanding, throwVector: throwVector,
-                    conditions: windOnlyConditions, balance: balance, squash: targetSquash
-                )
-                let finalLanding = WeatherEngine.landing(
-                    aimed: aimedLanding, throwVector: throwVector,
-                    conditions: conditions, balance: balance, squash: targetSquash
-                )
-                let tier = encounter.selectedTier
-                let species = encounter.species
-                let hasRainSkid = conditions.rainIntensity > 0
-
-                isThrowInFlight = true
-                withAnimation(.easeOut(duration: balance.throwDuration)) {
-                    dragTranslation = CGSize(width: windLanding.x - basketCenter.x, height: windLanding.y - basketCenter.y)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + balance.throwDuration) {
-                    guard hasRainSkid else {
-                        resolveThrow(species: species, tier: tier, landing: finalLanding)
-                        return
-                    }
-                    withAnimation(.easeOut(duration: balance.rainSkidDuration)) {
-                        dragTranslation = CGSize(width: finalLanding.x - basketCenter.x, height: finalLanding.y - basketCenter.y)
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + balance.rainSkidDuration) {
-                        resolveThrow(species: species, tier: tier, landing: finalLanding)
-                    }
-                }
-            }
-    }
-
-    private func resolveThrow(species: RescueSpecies, tier: Int, landing: CGPoint) {
-        let dx = landing.x - targetCenter.x
-        let dy = landing.y - targetCenter.y
-        let distance = hypot(dx, dy / targetSquash)
-        let precision = RescueEngine.precision(distance: distance, balance: balance)
-
-        var generator = SystemRandomNumberGenerator()
-        let outcome = RescueEngine.resolve(
-            species: species,
-            tier: tier,
-            precision: precision,
-            balance: balance,
-            using: &generator
-        )
-
-        // Sempre consome a cesta usada, mesmo quando o pouso foi .miss.
-        encounter.stock[tier, default: 0] -= 1
-
-        switch outcome {
-        case .rescued:
-            encounter.outcome = .rescued
-            SanctuaryHaptics.success()
-            message = SanctuaryNotice(message: "\(species.displayName) foi resgatado.", kind: .success)
-        case .fled:
-            encounter.outcome = .fled
-            message = SanctuaryNotice(message: "\(species.displayName) fugiu.", kind: .warning)
-        case .stayed:
-            if stockDepleted {
-                message = SanctuaryNotice(message: "As cestas acabaram.", kind: .warning)
-            } else {
-                showWarning("A cesta não convenceu. O animal continua ali.")
-            }
-        }
-
-        isThrowInFlight = false
-        dragTranslation = .zero
+            .onChanged { value in viewModel.beginThrow(translation: value.translation) }
+            .onEnded { value in viewModel.endThrow(translation: value.translation) }
     }
 
     private func captureCenter(into point: Binding<CGPoint>) -> some View {
@@ -601,19 +376,19 @@ struct RescueView: View {
 
     private var footer: some View {
         Button {
-            showsBasketSheet = true
+            viewModel.showsBasketSheet = true
         } label: {
             HStack(spacing: 12) {
-                Image(encounter.species.family.imageName)
+                Image(viewModel.encounter.species.family.imageName)
                     .resizable()
                     .scaledToFit()
                     .frame(width: 44, height: 44)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(encounter.species.family.basketName(tier: encounter.selectedTier))
+                    Text(viewModel.encounter.species.family.basketName(tier: viewModel.encounter.selectedTier))
                         .font(.subheadline.weight(.semibold))
-                    Text("\(currentStock) restantes")
+                    Text("\(viewModel.currentStock) restantes")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -628,23 +403,11 @@ struct RescueView: View {
             .padding(.horizontal, 14)
         }
         .buttonStyle(SoftActionButtonStyle())
-        .disabled(isThrowInFlight || encounterEnded)
-        .accessibilityLabel("Cesta selecionada: \(encounter.species.family.basketName(tier: encounter.selectedTier)), \(currentStock) restantes")
+        .disabled(viewModel.isThrowInFlight || viewModel.encounterEnded)
+        .accessibilityLabel("Cesta selecionada: \(viewModel.encounter.species.family.basketName(tier: viewModel.encounter.selectedTier)), \(viewModel.currentStock) restantes")
         .accessibilityHint("Toque para escolher outra cesta")
-        .sheet(isPresented: $showsBasketSheet) {
-            BasketSheet(species: encounter.species, stock: encounter.stock, selectedTier: $encounter.selectedTier)
-        }
-    }
-
-    private var currentStock: Int {
-        encounter.stock[encounter.selectedTier, default: 0]
-    }
-
-    private func showWarning(_ text: String) {
-        let notice = SanctuaryNotice(message: text, kind: .warning)
-        message = notice
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-            if message?.id == notice.id { message = nil }
+        .sheet(isPresented: $viewModel.showsBasketSheet) {
+            BasketSheet(species: viewModel.encounter.species, stock: viewModel.encounter.stock, selectedTier: $viewModel.encounter.selectedTier)
         }
     }
 }
