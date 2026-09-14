@@ -240,7 +240,7 @@ struct POCLabView: View {
                 Section("Animais de teste") {
                     ForEach(store.speciesCatalog) { species in
                         Button {
-                            store.addAnimalForTesting(speciesID: species.id)
+                            store.acolher(speciesID: species.id)
                             SanctuaryHaptics.selection()
                         } label: {
                             HStack {

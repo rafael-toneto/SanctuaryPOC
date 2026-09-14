@@ -24,6 +24,7 @@ enum SanctuaryActionError: Error, Equatable, LocalizedError {
     case upgradePending
     case maximumLevel
     case mapSlotAlreadyDefined
+    case unknownSpecies
 
     var errorDescription: String? {
         switch self {
@@ -49,6 +50,8 @@ enum SanctuaryActionError: Error, Equatable, LocalizedError {
             "Esta melhoria já chegou ao nível 10."
         case .mapSlotAlreadyDefined:
             "Este espaço do mapa já possui um terreno."
+        case .unknownSpecies:
+            "Esta espécie não é reconhecida pelo santuário."
         }
     }
 }
@@ -77,7 +80,7 @@ final class SanctuaryStore: ObservableObject {
     init(
         persistence: SanctuaryPersisting = UserDefaultsSanctuaryPersistence(),
         config: BalanceConfig = .poc,
-        speciesCatalog: [SpeciesDefinition] = DemoSpecies.all,
+        speciesCatalog: [SpeciesDefinition] = DemoSpecies.all + RescueSpeciesBridge.all,
         now: Date = .now
     ) {
         self.persistence = persistence
@@ -412,15 +415,19 @@ final class SanctuaryStore: ObservableObject {
         announce("+\(amount) recursos de teste", kind: .success)
     }
 
-    func addAnimalForTesting(speciesID: String) {
-        guard let species = species(withID: speciesID) else { return }
+    @discardableResult
+    func acolher(speciesID: String) -> Result<Void, SanctuaryActionError> {
+        guard let species = species(withID: speciesID) else {
+            return fail(.unknownSpecies)
+        }
         var updated = state
         updated.animals.append(
             AnimalInstance(id: UUID(), speciesID: speciesID, location: .waiting)
         )
         state = updated
         save()
-        announce("\(species.displayName) adicionado à Central", kind: .success)
+        announce("\(species.displayName) chegou ao acolhimento", kind: .success)
+        return .success(())
     }
 
     func simulateOffline(hours: Double = 1, at now: Date = .now) {

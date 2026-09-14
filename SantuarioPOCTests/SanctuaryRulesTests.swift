@@ -45,7 +45,7 @@ final class SanctuaryRulesTests: XCTestCase {
         XCTAssertSuccess(store.placeAnimal(speciesID: "lobo-guara-demo", into: field.id, at: now))
         XCTAssertEqual(store.residents(in: field.id).count, 3)
 
-        store.addAnimalForTesting(speciesID: "lobo-guara-demo")
+        store.acolher(speciesID: "lobo-guara-demo")
         XCTAssertFailure(
             store.placeAnimal(speciesID: "lobo-guara-demo", into: field.id, at: now),
             equals: .terrainFull
