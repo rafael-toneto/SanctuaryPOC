@@ -68,7 +68,7 @@ struct SanctuaryView: View {
             }
         }
         .fullScreenCover(isPresented: $showsRescue) {
-            RescueView()
+            RescueView(store: store)
         }
         .onAppear { store.resume() }
         .onReceive(timer) { store.tick(at: $0) }

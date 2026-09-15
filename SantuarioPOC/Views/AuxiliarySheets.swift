@@ -12,7 +12,7 @@ struct AnimalStorageView: View {
                     HStack(alignment: .top, spacing: 11) {
                         Image(systemName: "heart.text.square.fill")
                             .foregroundStyle(SanctuaryTheme.lime)
-                        Text("Esta Central existe para testar o armazenamento e a movimentação sem implementar mapa ou resgate. Ela não define o fluxo final quando faltar capacidade.")
+                        Text("Aqui esperam os animais resgatados até um terreno compatível ficar disponível. Quando falta capacidade, o destino do animal ainda não é o fluxo final.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -20,9 +20,16 @@ struct AnimalStorageView: View {
                 }
 
                 Section("Aguardando terreno") {
-                    ForEach(store.speciesSummaries) { summary in
-                        speciesRow(summary)
+                    if activeSummaries.isEmpty {
+                        Text("Nenhum animal aguardando. Resgate um animal para acolhê-lo aqui.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                             .listRowBackground(Color.white.opacity(0.055))
+                    } else {
+                        ForEach(activeSummaries) { summary in
+                            speciesRow(summary)
+                                .listRowBackground(Color.white.opacity(0.055))
+                        }
                     }
                 }
             }
@@ -63,6 +70,10 @@ struct AnimalStorageView: View {
             }
         }
         .sanctuaryNoticeOverlay(store: store)
+    }
+
+    private var activeSummaries: [SpeciesSummary] {
+        store.speciesSummaries.filter { $0.waitingCount > 0 || $0.accommodatedCount > 0 }
     }
 
     private func speciesRow(_ summary: SpeciesSummary) -> some View {
@@ -240,7 +251,7 @@ struct POCLabView: View {
                 Section("Animais de teste") {
                     ForEach(store.speciesCatalog) { species in
                         Button {
-                            store.addAnimalForTesting(speciesID: species.id)
+                            store.acolher(speciesID: species.id)
                             SanctuaryHaptics.selection()
                         } label: {
                             HStack {
