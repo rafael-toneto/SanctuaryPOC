@@ -32,6 +32,11 @@ final class SanctuaryMapUIScrollView: UIScrollView {
     override func touchesShouldCancel(in view: UIView) -> Bool {
         true
     }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        decelerationRate = .normal
+    }
 }
 
 /// Observes a pinch even when it starts over a SwiftUI Button, but never
@@ -364,24 +369,46 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
             let minDistance = sqrt(minDistSq)
 
             // 3. Raio orgânico contínuo ao redor do esqueleto dos terrenos comprados
-            // A largura de cada terreno é 224x276. Um raio de 90pt forma um corredor
-            // perfeitamente uniforme e contínuo ao longo de todos os terrenos adquiridos,
-            // eliminando qualquer gargalo ou truncamento entre conexões e mantendo a visão
-            // contida estritamente sobre a área comprada.
-            let maxAllowedRadius: CGFloat = 90
+            let maxAllowedRadius: CGFloat = 130
+            // Zona focal central da tela (círculo verde de 120pt de diâmetro -> 60pt de raio)
+            // Impede que a borda do círculo central saia da área permitida ou penetre em frestas menores que ele
+            let centerZoneRadius: CGFloat = 60
 
             var clampedCenterX = p.x
             var clampedCenterY = p.y
 
-            if minDistance > maxAllowedRadius && minDistance > 0.001 {
-                let factor = maxAllowedRadius / minDistance
+            // Se o centro somado ao seu raio de ocupação ultrapassar a área permitida
+            if minDistance > (maxAllowedRadius - centerZoneRadius) && minDistance > 0.001 {
+                let effectiveMax = max(10, maxAllowedRadius - centerZoneRadius)
+                let factor = effectiveMax / minDistance
                 clampedCenterX = closestPoint.x + (p.x - closestPoint.x) * factor
                 clampedCenterY = closestPoint.y + (p.y - closestPoint.y) * factor
             }
 
-            // 4. Converte o centro restrito de volta para contentOffset
-            let clampedX = clampedCenterX * zoom - bounds.width / 2
-            let clampedY = clampedCenterY * zoom - bounds.height / 2
+            // 4. Converte o centro restrito para contentOffset inicial
+            var clampedX = clampedCenterX * zoom - bounds.width / 2
+            var clampedY = clampedCenterY * zoom - bounds.height / 2
+
+            // 5. Contenção da Bounding Box Total (Impede que a Bounding Box amarela saia da tela)
+            let boxMinX = activeRectLimit.minX * zoom
+            let boxMaxX = activeRectLimit.maxX * zoom
+            let boxMinY = activeRectLimit.minY * zoom
+            let boxMaxY = activeRectLimit.maxY * zoom
+
+            let viewportW = bounds.width
+            let viewportH = bounds.height
+
+            if (boxMaxX - boxMinX) >= viewportW {
+                clampedX = min(max(clampedX, boxMinX), boxMaxX - viewportW)
+            } else {
+                clampedX = (boxMinX + boxMaxX - viewportW) / 2
+            }
+
+            if (boxMaxY - boxMinY) >= viewportH {
+                clampedY = min(max(clampedY, boxMinY), boxMaxY - viewportH)
+            } else {
+                clampedY = (boxMinY + boxMaxY - viewportH) / 2
+            }
 
             return CGPoint(x: clampedX, y: clampedY)
         }

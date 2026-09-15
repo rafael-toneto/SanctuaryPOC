@@ -140,11 +140,71 @@ struct SanctuaryMapView: View {
                             .zIndex(20000 + lot.position.y)
                         }
                     }
+
+                    // MARK: - Debug: Limites e Bounding Boxes do Scroll em Cores Vivas (Acelerado por Metal GPU)
+                    Group {
+                        // 1. Bounding Box geral da área do Santuário (Amarelo Neon tracejado)
+                        Path { path in
+                            path.addRect(viewModel.sanctuaryActiveRect)
+                        }
+                        .stroke(Color.yellow, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                        .zIndex(30000)
+
+                        // 2. Corredores e cápsulas de 130pt em torno dos segmentos do esqueleto (Magenta Neon)
+                        ForEach(Array(viewModel.ownedSkeletonSegments.enumerated()), id: \.offset) { _, seg in
+                            Path { path in
+                                path.move(to: seg.start)
+                                path.addLine(to: seg.end)
+                            }
+                            .stroke(Color.pink.opacity(0.35), style: StrokeStyle(lineWidth: 260, lineCap: .round, lineJoin: .round))
+                            .zIndex(30001)
+
+                            // Linha central do segmento (Magenta sólida)
+                            Path { path in
+                                path.move(to: seg.start)
+                                path.addLine(to: seg.end)
+                            }
+                            .stroke(Color.pink, style: StrokeStyle(lineWidth: 4))
+                            .zIndex(30002)
+                        }
+
+                        // 3. Raio de limite de 130pt ao redor de cada terreno comprado (Ciano Neon translúcido e borda viva)
+                        ForEach(Array(viewModel.ownedLotPositions.enumerated()), id: \.offset) { _, pos in
+                            Circle()
+                                .fill(Color.cyan.opacity(0.22))
+                                .frame(width: 260, height: 260)
+                                .position(pos)
+                                .zIndex(30003)
+
+                            Circle()
+                                .stroke(Color.cyan, lineWidth: 3)
+                                .frame(width: 260, height: 260)
+                                .position(pos)
+                                .zIndex(30004)
+
+                            // Centro do lote comprado (Ponto Vermelho vivo)
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 14, height: 14)
+                                .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                                .position(pos)
+                                .zIndex(30005)
+                        }
+                    }
+                    .drawingGroup()
+                    .allowsHitTesting(false)
                 }
                 .frame(width: viewModel.canvasSize.width, height: viewModel.canvasSize.height)
             }
             .background(SanctuaryTheme.ink)
             .accessibilityLabel("Mapa navegável do santuário")
+
+            // Círculo visualizador da porção central da tela
+            Circle()
+                .stroke(Color.green.opacity(0.85), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                .background(Circle().fill(Color.green.opacity(0.08)))
+                .frame(width: 120, height: 120)
+                .allowsHitTesting(false)
 
             mapInstructions
 
@@ -219,15 +279,19 @@ struct SanctuaryMapView: View {
         VStack {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Arraste • belisque", systemImage: "hand.draw.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(SanctuaryTheme.cream)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(SanctuaryTheme.ink.opacity(0.84), in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.12)))
-                        .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-                        .accessibilityHidden(true)
+                    HStack(spacing: 8) {
+                        FPSOverlayView()
+
+                        Label("Arraste • belisque", systemImage: "hand.draw.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SanctuaryTheme.cream)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(SanctuaryTheme.ink.opacity(0.84), in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.12)))
+                            .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                            .accessibilityHidden(true)
+                    }
 
                     Label("\(viewModel.cloudPuffs.count) nuvens (debug)", systemImage: "cloud.fill")
                         .font(.caption2.weight(.semibold))
@@ -238,6 +302,29 @@ struct SanctuaryMapView: View {
                         .overlay(Capsule().stroke(.white.opacity(0.12)))
                         .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                         .accessibilityLabel("Contador de debug: \(viewModel.cloudPuffs.count) nuvens ativas")
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.pink).frame(width: 8, height: 8)
+                            Text("Rosa: Limite corredor 130pt (Esqueleto)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        }
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.cyan).frame(width: 8, height: 8)
+                            Text("Ciano: Limite raio 130pt (Terreno)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        }
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.yellow).frame(width: 8, height: 8)
+                            Text("Amarelo: BoundingBox total").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        }
+                        HStack(spacing: 6) {
+                            Circle().stroke(Color.green, lineWidth: 2).frame(width: 8, height: 8)
+                            Text("Verde: Porção central da tela").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(SanctuaryTheme.ink.opacity(0.88), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15)))
                 }
 
                 Spacer()

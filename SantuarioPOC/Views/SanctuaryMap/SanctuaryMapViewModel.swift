@@ -210,13 +210,14 @@ final class SanctuaryMapViewModel: ObservableObject {
         var segments: [SanctuaryMapSegment] = []
         var adj = [Set<Int>](repeating: Set<Int>(), count: n)
 
-        // 1. Conexões diretas entre terrenos vizinhos adjacentes no grid hexagonal (distância <= 185pt)
+        // 1. Conexões diretas entre terrenos vizinhos no grid (incluindo vizinhos diagonais de até 275pt)
+        // Isso fecha qualquer fresta ou gargalo estreito entre terrenos comprados próximos
         for i in 0..<n {
             for j in (i + 1)..<n {
                 let dx = positions[i].x - positions[j].x
                 let dy = positions[i].y - positions[j].y
                 let dist = hypot(dx, dy)
-                if dist <= 185 {
+                if dist <= 275 {
                     segments.append(SanctuaryMapSegment(start: positions[i], end: positions[j]))
                     adj[i].insert(j)
                     adj[j].insert(i)
