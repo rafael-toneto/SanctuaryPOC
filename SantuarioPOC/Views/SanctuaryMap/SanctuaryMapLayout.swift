@@ -6,6 +6,11 @@ struct SanctuaryMapLot: Identifiable, Equatable {
     let rotation: Angle
 }
 
+struct SanctuaryMapSegment: Equatable {
+    let start: CGPoint
+    let end: CGPoint
+}
+
 enum SanctuaryMapLayout {
     static let lotSize = CGSize(width: 224, height: 276)
     /// A rotated asset can extend beyond `lotSize`. The view needs a square

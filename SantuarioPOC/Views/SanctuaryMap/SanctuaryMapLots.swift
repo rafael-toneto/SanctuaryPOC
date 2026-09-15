@@ -69,15 +69,11 @@ struct TerrainInteractionShape: Shape {
 }
 
 struct SanctuaryTerrainLot: View {
-    @ObservedObject var store: SanctuaryStore
     let terrain: Terrain
     let rotation: Angle
+    let residents: [AnimalInstance]
+    let species: SpeciesDefinition?
     let open: () -> Void
-    let collect: () -> Void
-
-    private var residents: [AnimalInstance] { store.residents(in: terrain.id) }
-    private var species: SpeciesDefinition? { store.residentSpecies(in: terrain.id) }
-    private var collectableAmount: Int { Int(floor(terrain.storedResources)) }
     
     private func animalSlots(for rotation: Angle) -> [AnimalSlot] {
         let degrees = Int(round(rotation.degrees))
@@ -118,13 +114,16 @@ struct SanctuaryTerrainLot: View {
 
                 if terrain.isUnlocked, let species = species {
                     let slots = animalSlots(for: rotation)
-                    ForEach(Array(residents.prefix(4).enumerated()), id: \.element.id) { index, resident in
-                        let slot = slots[index % slots.count]
-                        WanderingAnimalView(
-                            animal: species.spriteName,
-                            center: slot.position,
-                            isFacingLeft: slot.isFacingLeft
-                        )
+                    let activeResidents = Array(residents.prefix(4).enumerated())
+                    TimelineView(.periodic(from: .now, by: 1.0 / 6.0)) { context in
+                        let t = context.date.timeIntervalSinceReferenceDate
+                        ForEach(activeResidents, id: \.element.id) { index, resident in
+                            let slot = slots[index % slots.count]
+                            AnimalSpriteView(animal: species.spriteName, t: t)
+                                .frame(width: 48, height: 48)
+                                .scaleEffect(x: slot.isFacingLeft ? -1 : 1, y: 1)
+                                .offset(x: slot.position.x, y: slot.position.y - 10)
+                        }
                     }
                 }
             }
@@ -349,7 +348,7 @@ struct WanderingAnimalView: View {
     let isFacingLeft: Bool
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.periodic(from: .now, by: 1.0 / 6.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             
             AnimalSpriteView(animal: animal, t: t)

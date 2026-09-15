@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SanctuaryMapView: View {
-    @ObservedObject var store: SanctuaryStore
+    let store: SanctuaryStore
     var showMapBadges: Bool = true
     let openTerrain: (Terrain) -> Void
     let collect: (Terrain) -> Void
@@ -30,7 +30,8 @@ struct SanctuaryMapView: View {
                 maximumZoomScale: viewModel.maximumZoom,
                 canvasSize: viewModel.canvasSize,
                 activeRectLimit: viewModel.sanctuaryActiveRect,
-                visibleLotPositions: viewModel.visibleLotPositions,
+                ownedLotPositions: viewModel.ownedLotPositions,
+                ownedSkeletonSegments: viewModel.ownedSkeletonSegments,
                 gestureGate: viewModel.gestureGate
             ) {
                 ZStack(alignment: .topLeading) {
@@ -62,12 +63,6 @@ struct SanctuaryMapView: View {
                             .zIndex(500)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
-                            .transition(
-                                .asymmetric(
-                                    insertion: .scale(scale: 0.8).combined(with: .opacity),
-                                    removal: .scale(scale: 1.4).combined(with: .opacity)
-                                )
-                            )
                     }
                     .animation(.spring(response: 0.9, dampingFraction: 0.76), value: viewModel.cloudPuffs)
 
@@ -75,14 +70,12 @@ struct SanctuaryMapView: View {
                     ForEach(viewModel.displayableLots) { lot in
                         if let terrain = viewModel.terrain(at: lot.id) {
                             SanctuaryTerrainLot(
-                                store: store,
                                 terrain: terrain,
                                 rotation: lot.rotation,
+                                residents: viewModel.residents(in: terrain.id),
+                                species: viewModel.residentSpecies(in: terrain.id),
                                 open: {
                                     viewModel.openTerrain(terrain, callback: openTerrain)
-                                },
-                                collect: {
-                                    viewModel.collectTerrain(terrain, callback: collect)
                                 }
                             )
                             .frame(
@@ -94,7 +87,7 @@ struct SanctuaryMapView: View {
                             .transition(.scale(scale: 0.88).combined(with: .opacity))
                         }
                     }
-                    .animation(.spring(response: 0.85, dampingFraction: 0.8), value: store.state.terrains.count)
+                    .animation(.spring(response: 0.85, dampingFraction: 0.8), value: viewModel.ownedTerrainCount)
 
                     // Botões de compra (+) nos terrenos disponíveis
                     ForEach(viewModel.displayableLots) { lot in
@@ -137,7 +130,7 @@ struct SanctuaryMapView: View {
                                 rotation: lot.rotation,
                                 collect: { collect(terrain) },
                                 showBadges: showMapBadges,
-                                residentCount: store.residents(in: terrain.id).count
+                                residentCount: viewModel.residents(in: terrain.id).count
                             )
                             .frame(
                                 width: SanctuaryMapLayout.lotInteractionSize.width,

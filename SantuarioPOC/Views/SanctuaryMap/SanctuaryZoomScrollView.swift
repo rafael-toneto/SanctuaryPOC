@@ -55,7 +55,8 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
     let maximumZoomScale: CGFloat
     let canvasSize: CGSize
     let activeRectLimit: CGRect
-    let visibleLotPositions: [CGPoint]
+    let ownedLotPositions: [CGPoint]
+    let ownedSkeletonSegments: [SanctuaryMapSegment]
     let gestureGate: SanctuaryMapGestureGate
     let content: Content
 
@@ -66,7 +67,8 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         maximumZoomScale: CGFloat,
         canvasSize: CGSize,
         activeRectLimit: CGRect,
-        visibleLotPositions: [CGPoint],
+        ownedLotPositions: [CGPoint],
+        ownedSkeletonSegments: [SanctuaryMapSegment],
         gestureGate: SanctuaryMapGestureGate,
         @ViewBuilder content: () -> Content
     ) {
@@ -76,7 +78,8 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         self.maximumZoomScale = maximumZoomScale
         self.canvasSize = canvasSize
         self.activeRectLimit = activeRectLimit
-        self.visibleLotPositions = visibleLotPositions
+        self.ownedLotPositions = ownedLotPositions
+        self.ownedSkeletonSegments = ownedSkeletonSegments
         self.gestureGate = gestureGate
         self.content = content()
     }
@@ -86,7 +89,8 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
             zoomScale: $zoomScale,
             gestureGate: gestureGate,
             activeRectLimit: activeRectLimit,
-            visibleLotPositions: visibleLotPositions
+            ownedLotPositions: ownedLotPositions,
+            ownedSkeletonSegments: ownedSkeletonSegments
         )
     }
 
@@ -156,7 +160,8 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         coordinator.zoomScale = $zoomScale
         coordinator.gestureGate = gestureGate
         coordinator.activeRectLimit = activeRectLimit
-        coordinator.visibleLotPositions = visibleLotPositions
+        coordinator.ownedLotPositions = ownedLotPositions
+        coordinator.ownedSkeletonSegments = ownedSkeletonSegments
         coordinator.hostingController?.rootView = content
         coordinator.widthConstraint?.constant = canvasSize.width
         coordinator.heightConstraint?.constant = canvasSize.height
@@ -222,7 +227,8 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         var zoomScale: Binding<CGFloat>
         var gestureGate: SanctuaryMapGestureGate
         var activeRectLimit: CGRect
-        var visibleLotPositions: [CGPoint]
+        var ownedLotPositions: [CGPoint]
+        var ownedSkeletonSegments: [SanctuaryMapSegment]
         var hostingController: UIHostingController<Content>?
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
@@ -245,12 +251,14 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
             zoomScale: Binding<CGFloat>,
             gestureGate: SanctuaryMapGestureGate,
             activeRectLimit: CGRect,
-            visibleLotPositions: [CGPoint]
+            ownedLotPositions: [CGPoint],
+            ownedSkeletonSegments: [SanctuaryMapSegment]
         ) {
             self.zoomScale = zoomScale
             self.gestureGate = gestureGate
             self.activeRectLimit = activeRectLimit
-            self.visibleLotPositions = visibleLotPositions
+            self.ownedLotPositions = ownedLotPositions
+            self.ownedSkeletonSegments = ownedSkeletonSegments
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -310,58 +318,68 @@ struct SanctuaryZoomScrollView<Content: View>: UIViewRepresentable {
         }
 
         func clampOffset(_ offset: CGPoint, in scrollView: UIScrollView) -> CGPoint {
-            guard !visibleLotPositions.isEmpty else { return offset }
+            guard !ownedLotPositions.isEmpty else { return offset }
             let zoom = scrollView.zoomScale
             let bounds = scrollView.bounds
             guard bounds.width > 0, bounds.height > 0 else { return offset }
 
-            // 1. Centro atual proposto da câmera em coordenadas do canvas
+            // 1. Centro proposto da câmera em coordenadas do canvas
             let proposedCenterX = (offset.x + bounds.width / 2) / zoom
             let proposedCenterY = (offset.y + bounds.height / 2) / zoom
-            let proposedCenter = CGPoint(x: proposedCenterX, y: proposedCenterY)
+            let p = CGPoint(x: proposedCenterX, y: proposedCenterY)
 
-            // 2. Encontrar o terreno visível mais próximo do centro proposto
-            var closestPos = visibleLotPositions[0]
+            // 2. Encontrar o ponto mais próximo no esqueleto orgânico dos terrenos comprados
             var minDistSq: CGFloat = .infinity
+            var closestPoint = ownedLotPositions[0]
 
-            for pos in visibleLotPositions {
-                let dx = proposedCenter.x - pos.x
-                let dy = proposedCenter.y - pos.y
-                let distSq = dx * dx + dy * dy
-                if distSq < minDistSq {
-                    minDistSq = distSq
-                    closestPos = pos
+            for v in ownedLotPositions {
+                let dx = p.x - v.x
+                let dy = p.y - v.y
+                let dSq = dx * dx + dy * dy
+                if dSq < minDistSq {
+                    minDistSq = dSq
+                    closestPoint = v
+                }
+            }
+
+            for seg in ownedSkeletonSegments {
+                let abx = seg.end.x - seg.start.x
+                let aby = seg.end.y - seg.start.y
+                let apx = p.x - seg.start.x
+                let apy = p.y - seg.start.y
+                let segLenSq = abx * abx + aby * aby
+                if segLenSq > 0.001 {
+                    let t = max(0, min(1, (apx * abx + apy * aby) / segLenSq))
+                    let proj = CGPoint(x: seg.start.x + t * abx, y: seg.start.y + t * aby)
+                    let dx = p.x - proj.x
+                    let dy = p.y - proj.y
+                    let dSq = dx * dx + dy * dy
+                    if dSq < minDistSq {
+                        minDistSq = dSq
+                        closestPoint = proj
+                    }
                 }
             }
 
             let minDistance = sqrt(minDistSq)
 
-            // 3. Raio máximo de influência orgânica (limite onde as nuvens começam ao redor de cada lote)
-            // A distância entre centros de lotes adjacentes no grid hexagonal varia entre 142pt e 190pt.
-            // Reduzido para 75pt para que a rolagem fique ainda mais contida sobre os terrenos,
-            // revelando apenas a primeira borda de nuvens e evitando campos vazios de nuvens.
-            let maxAllowedRadius: CGFloat = 75
+            // 3. Raio orgânico contínuo ao redor do esqueleto dos terrenos comprados
+            // A largura de cada terreno é 224x276. Um raio de 90pt forma um corredor
+            // perfeitamente uniforme e contínuo ao longo de todos os terrenos adquiridos,
+            // eliminando qualquer gargalo ou truncamento entre conexões e mantendo a visão
+            // contida estritamente sobre a área comprada.
+            let maxAllowedRadius: CGFloat = 90
 
-            var clampedCenterX = proposedCenter.x
-            var clampedCenterY = proposedCenter.y
+            var clampedCenterX = p.x
+            var clampedCenterY = p.y
 
             if minDistance > maxAllowedRadius && minDistance > 0.001 {
                 let factor = maxAllowedRadius / minDistance
-                clampedCenterX = closestPos.x + (proposedCenter.x - closestPos.x) * factor
-                clampedCenterY = closestPos.y + (proposedCenter.y - closestPos.y) * factor
+                clampedCenterX = closestPoint.x + (p.x - closestPoint.x) * factor
+                clampedCenterY = closestPoint.y + (p.y - closestPoint.y) * factor
             }
 
-            // 4. Se a totalidade dos terrenos couber na tela em um dos eixos, mantém centralizado nesse eixo
-            let rectW = activeRectLimit.width * zoom
-            let rectH = activeRectLimit.height * zoom
-            if rectW <= bounds.width {
-                clampedCenterX = activeRectLimit.midX
-            }
-            if rectH <= bounds.height {
-                clampedCenterY = activeRectLimit.midY
-            }
-
-            // 5. Converte o centro da câmera restrito de volta para contentOffset
+            // 4. Converte o centro restrito de volta para contentOffset
             let clampedX = clampedCenterX * zoom - bounds.width / 2
             let clampedY = clampedCenterY * zoom - bounds.height / 2
 
