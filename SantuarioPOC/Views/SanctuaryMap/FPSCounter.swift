@@ -1,58 +1,30 @@
 import SwiftUI
 import Combine
 
-/// Monitor de taxa de quadros (FPS) baseado em CADisplayLink.
-/// Conecta-se diretamente ao refresh rate nativo da tela (60Hz ou 120Hz ProMotion).
+/// Monitor de taxa de quadros processados pela cena SpriteKit.
 final class FPSCounter: ObservableObject {
     static let shared = FPSCounter()
 
     @Published private(set) var currentFPS: Double = 60.0
     @Published private(set) var nominalMaxFPS: Double = 60.0
 
-    private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval = 0
     private var frameCount: Int = 0
     private var accumulatedDuration: CFTimeInterval = 0
 
     init() {
-        start()
+        nominalMaxFPS = Double(UIScreen.main.maximumFramesPerSecond)
     }
 
-    func start() {
-        stop()
-        let dl = CADisplayLink(target: self, selector: #selector(handleFrame(_:)))
-        
-        // Ativa suporte total a ProMotion / alta taxa de quadros nativa da tela
-        if #available(iOS 15.0, *) {
-            let maxHz = Float(UIScreen.main.maximumFramesPerSecond)
-            nominalMaxFPS = Double(maxHz)
-            dl.preferredFrameRateRange = CAFrameRateRange(
-                minimum: 30,
-                maximum: maxHz,
-                preferred: maxHz
-            )
-        }
-        
-        dl.add(to: .main, forMode: .common)
-        self.displayLink = dl
-    }
-
-    func stop() {
-        displayLink?.invalidate()
-        displayLink = nil
-        lastTimestamp = 0
-        frameCount = 0
-        accumulatedDuration = 0
-    }
-
-    @objc private func handleFrame(_ link: CADisplayLink) {
+    /// Registra um frame que completou o ciclo de atualização do SpriteKit.
+    func recordSpriteKitFrame(at timestamp: TimeInterval) {
         if lastTimestamp == 0 {
-            lastTimestamp = link.timestamp
+            lastTimestamp = timestamp
             return
         }
 
-        let delta = link.timestamp - lastTimestamp
-        lastTimestamp = link.timestamp
+        let delta = timestamp - lastTimestamp
+        lastTimestamp = timestamp
 
         frameCount += 1
         accumulatedDuration += delta
@@ -66,9 +38,6 @@ final class FPSCounter: ObservableObject {
         }
     }
 
-    deinit {
-        stop()
-    }
 }
 
 /// View flutuante moderna para visualização do medidor de FPS e taxa da tela

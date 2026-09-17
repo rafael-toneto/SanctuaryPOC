@@ -12,8 +12,6 @@ final class SanctuaryMapViewModel: ObservableObject {
     @Published var committedZoom: CGFloat = 1
     @Published var centerRequest = 0
 
-    let gestureGate = SanctuaryMapGestureGate()
-
     // MARK: - Combine & Cache
     private var cancellables = Set<AnyCancellable>()
     private var lastCacheKey: Int = -1
@@ -22,8 +20,6 @@ final class SanctuaryMapViewModel: ObservableObject {
     private var _cachedLots: [SanctuaryMapLot] = []
     private var _cachedDisplayableLots: [SanctuaryMapLot] = []
     private var _cachedVisibleLotPositions: [CGPoint] = []
-    private var _cachedOwnedLotPositions: [CGPoint] = []
-    private var _cachedOwnedSkeletonSegments: [SanctuaryMapSegment] = []
     private var _cachedSanctuaryActiveRect: CGRect = .zero
     private var _cachedCloudPuffs: [SanctuaryMapLot] = []
 
@@ -36,7 +32,6 @@ final class SanctuaryMapViewModel: ObservableObject {
             let mapSlot: Int?
             let biome: Biome
             let isUnlocked: Bool
-            let collectable: Int
         }
     }
 
@@ -55,8 +50,7 @@ final class SanctuaryMapViewModel: ObservableObject {
                             id: $0.id,
                             mapSlot: $0.mapSlot,
                             biome: $0.biome,
-                            isUnlocked: $0.isUnlocked,
-                            collectable: Int(floor($0.storedResources))
+                            isUnlocked: $0.isUnlocked
                         )
                     },
                     animalAssignments: Dictionary(uniqueKeysWithValues: state.animals.map { ($0.id, $0.location) })
@@ -80,7 +74,6 @@ final class SanctuaryMapViewModel: ObservableObject {
             hasher.combine(t.mapSlot ?? -1)
             hasher.combine(t.biome)
             hasher.combine(t.isUnlocked)
-            hasher.combine(Int(floor(t.storedResources)))
         }
         return hasher.finalize()
     }
@@ -101,8 +94,6 @@ final class SanctuaryMapViewModel: ObservableObject {
         // 2. Displayable lots & Owned lots
         let ownedLotIDs = Set(store.state.terrains.compactMap { $0.mapSlot })
         let ownedPositions = _cachedLots.filter { ownedLotIDs.contains($0.id) }.map { $0.position }
-        _cachedOwnedLotPositions = ownedPositions
-        _cachedOwnedSkeletonSegments = Self.buildSkeleton(from: ownedPositions)
 
         _cachedDisplayableLots = _cachedLots.filter { lot in
             if terrain(at: lot.id) != nil {
@@ -120,26 +111,32 @@ final class SanctuaryMapViewModel: ObservableObject {
         // 3. Positions & Active rect
         _cachedVisibleLotPositions = _cachedDisplayableLots.map(\.position)
 
-        if let first = _cachedVisibleLotPositions.first {
+        // A área navegável considera somente terrenos comprados. Lotes vizinhos
+        // e nuvens continuam visíveis, mas não aumentam a bounding box externa.
+        if let first = ownedPositions.first {
             var minX = first.x
             var maxX = first.x
             var minY = first.y
             var maxY = first.y
-            for pos in _cachedVisibleLotPositions {
+            for pos in ownedPositions {
                 minX = min(minX, pos.x)
                 maxX = max(maxX, pos.x)
                 minY = min(minY, pos.y)
                 maxY = max(maxY, pos.y)
             }
 
-            let halfLotWidth: CGFloat = SanctuaryMapLayout.lotSize.width / 2
-            let halfLotHeight: CGFloat = SanctuaryMapLayout.lotSize.height / 2
+            // Terrenos podem estar rotacionados; o raio diagonal cobre toda a
+            // extensão do PNG e evita cortar seus cantos no limite da câmera.
+            let rotatedLotExtent = hypot(
+                SanctuaryMapLayout.lotSize.width / 2,
+                SanctuaryMapLayout.lotSize.height / 2
+            )
             let cloudEdgeMargin: CGFloat = 20
 
-            let boundMinX = minX - halfLotWidth - cloudEdgeMargin
-            let boundMaxX = maxX + halfLotWidth + cloudEdgeMargin
-            let boundMinY = minY - halfLotHeight - cloudEdgeMargin
-            let boundMaxY = maxY + halfLotHeight + cloudEdgeMargin
+            let boundMinX = minX - rotatedLotExtent - cloudEdgeMargin
+            let boundMaxX = maxX + rotatedLotExtent + cloudEdgeMargin
+            let boundMinY = minY - rotatedLotExtent - cloudEdgeMargin
+            let boundMaxY = maxY + rotatedLotExtent + cloudEdgeMargin
 
             _cachedSanctuaryActiveRect = CGRect(
                 x: boundMinX,
@@ -203,72 +200,6 @@ final class SanctuaryMapViewModel: ObservableObject {
         }
     }
 
-    private static func buildSkeleton(from positions: [CGPoint]) -> [SanctuaryMapSegment] {
-        guard positions.count > 1 else { return [] }
-
-        let n = positions.count
-        var segments: [SanctuaryMapSegment] = []
-        var adj = [Set<Int>](repeating: Set<Int>(), count: n)
-
-        // 1. Conexões diretas entre terrenos vizinhos no grid (incluindo vizinhos diagonais de até 275pt)
-        // Isso fecha qualquer fresta ou gargalo estreito entre terrenos comprados próximos
-        for i in 0..<n {
-            for j in (i + 1)..<n {
-                let dx = positions[i].x - positions[j].x
-                let dy = positions[i].y - positions[j].y
-                let dist = hypot(dx, dy)
-                if dist <= 275 {
-                    segments.append(SanctuaryMapSegment(start: positions[i], end: positions[j]))
-                    adj[i].insert(j)
-                    adj[j].insert(i)
-                }
-            }
-        }
-
-        // 2. Minimum Spanning Tree (Kruskal) para conectar qualquer ramificação ou ilha de terrenos comprados
-        struct Edge: Comparable {
-            let dist: CGFloat
-            let u: Int
-            let v: Int
-            static func < (lhs: Edge, rhs: Edge) -> Bool { lhs.dist < rhs.dist }
-        }
-
-        var allEdges: [Edge] = []
-        for i in 0..<n {
-            for j in (i + 1)..<n {
-                let dx = positions[i].x - positions[j].x
-                let dy = positions[i].y - positions[j].y
-                allEdges.append(Edge(dist: hypot(dx, dy), u: i, v: j))
-            }
-        }
-        allEdges.sort()
-
-        var parent = Array(0..<n)
-        func findRoot(_ x: Int) -> Int {
-            var curr = x
-            while parent[curr] != curr {
-                parent[curr] = parent[parent[curr]]
-                curr = parent[curr]
-            }
-            return curr
-        }
-
-        for edge in allEdges {
-            let rootU = findRoot(edge.u)
-            let rootV = findRoot(edge.v)
-            if rootU != rootV {
-                parent[rootU] = rootV
-                if !adj[edge.u].contains(edge.v) {
-                    segments.append(SanctuaryMapSegment(start: positions[edge.u], end: positions[edge.v]))
-                    adj[edge.u].insert(edge.v)
-                    adj[edge.v].insert(edge.u)
-                }
-            }
-        }
-
-        return segments
-    }
-
     var lotCount: Int {
         refreshCacheIfNeeded()
         return _cachedLotCount
@@ -294,16 +225,6 @@ final class SanctuaryMapViewModel: ObservableObject {
         return _cachedVisibleLotPositions
     }
 
-    var ownedLotPositions: [CGPoint] {
-        refreshCacheIfNeeded()
-        return _cachedOwnedLotPositions
-    }
-
-    var ownedSkeletonSegments: [SanctuaryMapSegment] {
-        refreshCacheIfNeeded()
-        return _cachedOwnedSkeletonSegments
-    }
-
     var sanctuaryActiveRect: CGRect {
         refreshCacheIfNeeded()
         return _cachedSanctuaryActiveRect
@@ -312,6 +233,29 @@ final class SanctuaryMapViewModel: ObservableObject {
     var cloudPuffs: [SanctuaryMapLot] {
         refreshCacheIfNeeded()
         return _cachedCloudPuffs
+    }
+
+    /// Identifica somente mudanças que exigem reconstruir os nós do SpriteKit.
+    /// Recursos acumulados não alteram o mapa e, portanto, não devem recriar sprites.
+    var mapRenderKey: Int {
+        refreshCacheIfNeeded()
+        var hasher = Hasher()
+        hasher.combine(lastCacheKey)
+
+        // A movimentação de um animal muda os sprites, mas não o layout em cache.
+        for animal in store.state.animals {
+            hasher.combine(animal.id)
+            hasher.combine(animal.speciesID)
+            switch animal.location {
+            case .waiting:
+                hasher.combine(0)
+            case let .terrain(terrainID):
+                hasher.combine(1)
+                hasher.combine(terrainID)
+            }
+        }
+
+        return hasher.finalize()
     }
 
     var ownedTerrainCount: Int {
@@ -365,19 +309,16 @@ final class SanctuaryMapViewModel: ObservableObject {
     }
 
     func selectUndefinedLot(id: Int) {
-        guard !gestureGate.suppressesLotActions else { return }
         selectedUndefinedLotID = id
         SanctuaryHaptics.selection()
     }
 
     func openTerrain(_ terrain: Terrain, callback: (Terrain) -> Void) {
-        guard !gestureGate.suppressesLotActions else { return }
         SanctuaryHaptics.selection()
         callback(terrain)
     }
 
     func collectTerrain(_ terrain: Terrain, callback: (Terrain) -> Void) {
-        guard !gestureGate.suppressesLotActions else { return }
         callback(terrain)
     }
 }

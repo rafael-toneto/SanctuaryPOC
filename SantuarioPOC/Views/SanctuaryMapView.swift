@@ -23,188 +23,17 @@ struct SanctuaryMapView: View {
 
     var body: some View {
         ZStack {
-            SanctuaryZoomScrollView(
-                zoomScale: $viewModel.committedZoom,
-                centerRequest: viewModel.centerRequest,
-                minimumZoomScale: viewModel.minimumZoom,
-                maximumZoomScale: viewModel.maximumZoom,
-                canvasSize: viewModel.canvasSize,
-                activeRectLimit: viewModel.sanctuaryActiveRect,
-                ownedLotPositions: viewModel.ownedLotPositions,
-                ownedSkeletonSegments: viewModel.ownedSkeletonSegments,
-                gestureGate: viewModel.gestureGate
-            ) {
-                ZStack(alignment: .topLeading) {
-                    SanctuaryMapBackdrop()
-
-                    // Terrenos indefinidos (camada base de floresta escura)
-                    ForEach(viewModel.displayableLots) { lot in
-                        if viewModel.terrain(at: lot.id) == nil {
-                            UndefinedTerrainBase(rotation: lot.rotation)
-                                .frame(
-                                    width: SanctuaryMapLayout.lotInteractionSize.width,
-                                    height: SanctuaryMapLayout.lotInteractionSize.height
-                                )
-                                .position(lot.position)
-                                .zIndex(0)
-                                .transition(.opacity)
-                        }
-                    }
-                    .animation(.spring(response: 0.85, dampingFraction: 0.78), value: viewModel.displayableLots)
-
-                    // Camada de nuvens circulares densas ao redor de todos os terrenos visíveis
-                    ForEach(viewModel.cloudPuffs) { lot in
-                        Image("clouds-background")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 420, height: 420)
-                            .position(lot.position)
-                            .opacity(0.75)
-                            .zIndex(500)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
-                    .animation(.spring(response: 0.9, dampingFraction: 0.76), value: viewModel.cloudPuffs)
-
-                    // Terrenos já adquiridos
-                    ForEach(viewModel.displayableLots) { lot in
-                        if let terrain = viewModel.terrain(at: lot.id) {
-                            SanctuaryTerrainLot(
-                                terrain: terrain,
-                                rotation: lot.rotation,
-                                residents: viewModel.residents(in: terrain.id),
-                                species: viewModel.residentSpecies(in: terrain.id),
-                                open: {
-                                    viewModel.openTerrain(terrain, callback: openTerrain)
-                                }
-                            )
-                            .frame(
-                                width: SanctuaryMapLayout.lotInteractionSize.width,
-                                height: SanctuaryMapLayout.lotInteractionSize.height
-                            )
-                            .position(lot.position)
-                            .zIndex(1000 + lot.position.y)
-                            .transition(.scale(scale: 0.88).combined(with: .opacity))
-                        }
-                    }
-                    .animation(.spring(response: 0.85, dampingFraction: 0.8), value: viewModel.ownedTerrainCount)
-
-                    // Botões de compra (+) nos terrenos disponíveis
-                    ForEach(viewModel.displayableLots) { lot in
-                        if viewModel.terrain(at: lot.id) == nil {
-                            UndefinedTerrainButton(
-                                rotation: lot.rotation,
-                                chooseBiome: {
-                                    viewModel.selectUndefinedLot(id: lot.id)
-                                }
-                            )
-                            .frame(
-                                width: SanctuaryMapLayout.lotInteractionSize.width,
-                                height: SanctuaryMapLayout.lotInteractionSize.height
-                            )
-                            .position(lot.position)
-                            .zIndex(15000 + lot.position.y)
-                            .transition(.scale(scale: 0.6).combined(with: .opacity))
-                        }
-                    }
-                    .animation(.spring(response: 0.8, dampingFraction: 0.8), value: viewModel.displayableLots)
-
-                    // Decorações de floresta
-                    ForEach(viewModel.displayableLots) { lot in
-                        if let terrain = viewModel.terrain(at: lot.id), terrain.biome == .forest {
-                            ForestDecorationsLot(rotation: lot.rotation)
-                                .frame(
-                                    width: SanctuaryMapLayout.lotInteractionSize.width,
-                                    height: SanctuaryMapLayout.lotInteractionSize.height
-                                )
-                                .position(lot.position)
-                                .zIndex(10000 + lot.position.y)
-                        }
-                    }
-
-                    // Insígnias de recursos e animais
-                    ForEach(viewModel.displayableLots) { lot in
-                        if let terrain = viewModel.terrain(at: lot.id) {
-                            TerrainBadgeLot(
-                                terrain: terrain,
-                                rotation: lot.rotation,
-                                collect: { collect(terrain) },
-                                showBadges: showMapBadges,
-                                residentCount: viewModel.residents(in: terrain.id).count
-                            )
-                            .frame(
-                                width: SanctuaryMapLayout.lotInteractionSize.width,
-                                height: SanctuaryMapLayout.lotInteractionSize.height
-                            )
-                            .position(lot.position)
-                            .zIndex(20000 + lot.position.y)
-                        }
-                    }
-
-                    // MARK: - Debug: Limites e Bounding Boxes do Scroll em Cores Vivas (Acelerado por Metal GPU)
-                    Group {
-                        // 1. Bounding Box geral da área do Santuário (Amarelo Neon tracejado)
-                        Path { path in
-                            path.addRect(viewModel.sanctuaryActiveRect)
-                        }
-                        .stroke(Color.yellow, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
-                        .zIndex(30000)
-
-                        // 2. Corredores e cápsulas de 130pt em torno dos segmentos do esqueleto (Magenta Neon)
-                        ForEach(Array(viewModel.ownedSkeletonSegments.enumerated()), id: \.offset) { _, seg in
-                            Path { path in
-                                path.move(to: seg.start)
-                                path.addLine(to: seg.end)
-                            }
-                            .stroke(Color.pink.opacity(0.35), style: StrokeStyle(lineWidth: 260, lineCap: .round, lineJoin: .round))
-                            .zIndex(30001)
-
-                            // Linha central do segmento (Magenta sólida)
-                            Path { path in
-                                path.move(to: seg.start)
-                                path.addLine(to: seg.end)
-                            }
-                            .stroke(Color.pink, style: StrokeStyle(lineWidth: 4))
-                            .zIndex(30002)
-                        }
-
-                        // 3. Raio de limite de 130pt ao redor de cada terreno comprado (Ciano Neon translúcido e borda viva)
-                        ForEach(Array(viewModel.ownedLotPositions.enumerated()), id: \.offset) { _, pos in
-                            Circle()
-                                .fill(Color.cyan.opacity(0.22))
-                                .frame(width: 260, height: 260)
-                                .position(pos)
-                                .zIndex(30003)
-
-                            Circle()
-                                .stroke(Color.cyan, lineWidth: 3)
-                                .frame(width: 260, height: 260)
-                                .position(pos)
-                                .zIndex(30004)
-
-                            // Centro do lote comprado (Ponto Vermelho vivo)
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 14, height: 14)
-                                .overlay(Circle().stroke(Color.white, lineWidth: 2))
-                                .position(pos)
-                                .zIndex(30005)
-                        }
-                    }
-                    .drawingGroup()
-                    .allowsHitTesting(false)
-                }
-                .frame(width: viewModel.canvasSize.width, height: viewModel.canvasSize.height)
-            }
+            SanctuarySpriteMapView(
+                viewModel: viewModel,
+                store: store,
+                openTerrain: openTerrain,
+                collect: collect
+            )
+            // Keep SpriteKit inside the space allocated by the parent layout.
+            // Extending it below the bottom inset makes the camera calculate
+            // against pixels hidden by the bottom bar, cutting off lower terrain.
             .background(SanctuaryTheme.ink)
-            .accessibilityLabel("Mapa navegável do santuário")
-
-            // Círculo visualizador da porção central da tela
-            Circle()
-                .stroke(Color.green.opacity(0.85), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                .background(Circle().fill(Color.green.opacity(0.08)))
-                .frame(width: 120, height: 120)
-                .allowsHitTesting(false)
+            .accessibilityLabel("Mapa navegável do santuário em SpriteKit")
 
             mapInstructions
 
@@ -293,38 +122,6 @@ struct SanctuaryMapView: View {
                             .accessibilityHidden(true)
                     }
 
-                    Label("\(viewModel.cloudPuffs.count) nuvens (debug)", systemImage: "cloud.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(SanctuaryTheme.cream.opacity(0.92))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(SanctuaryTheme.ink.opacity(0.84), in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.12)))
-                        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
-                        .accessibilityLabel("Contador de debug: \(viewModel.cloudPuffs.count) nuvens ativas")
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.pink).frame(width: 8, height: 8)
-                            Text("Rosa: Limite corredor 130pt (Esqueleto)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        }
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.cyan).frame(width: 8, height: 8)
-                            Text("Ciano: Limite raio 130pt (Terreno)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        }
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.yellow).frame(width: 8, height: 8)
-                            Text("Amarelo: BoundingBox total").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        }
-                        HStack(spacing: 6) {
-                            Circle().stroke(Color.green, lineWidth: 2).frame(width: 8, height: 8)
-                            Text("Verde: Porção central da tela").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(SanctuaryTheme.ink.opacity(0.88), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15)))
                 }
 
                 Spacer()
@@ -353,6 +150,48 @@ struct SanctuaryMapView: View {
         .frame(maxWidth: 520)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Legenda: azul aquático, verde-água úmido, verde floresta, verde amarelado planície e branco a definir")
+    }
+}
+
+struct MapLegendItem: View {
+    let color: Color
+    let title: String
+    var hasBorder = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+                .overlay {
+                    if hasBorder {
+                        Circle().stroke(.black.opacity(0.3), lineWidth: 1)
+                    }
+                }
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(SanctuaryTheme.cream)
+        }
+    }
+}
+
+extension Biome {
+    var mapAssetName: String {
+        switch self {
+        case .aquatic: "TerrainAquatic"
+        case .wetland: "TerrainWetland"
+        case .forest: "TerrainForest"
+        case .grassland: "TerrainGrassland"
+        }
+    }
+
+    var mapColor: Color {
+        switch self {
+        case .aquatic: Color(red: 0.11, green: 0.39, blue: 0.94)
+        case .wetland: Color(red: 0.10, green: 0.72, blue: 0.67)
+        case .forest: Color(red: 0.03, green: 0.68, blue: 0.04)
+        case .grassland: Color(red: 0.68, green: 0.78, blue: 0.25)
+        }
     }
 }
 
